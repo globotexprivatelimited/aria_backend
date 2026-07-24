@@ -11,6 +11,9 @@ import { dashboardRouter } from "./routes/dashboard";
 import { privacyRouter } from "./routes/privacy";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
+import { escalateStaleBookings } from "./dining";
+import { expireWaitlistHolds } from "./activities";
+import { sendDueTriggers } from "./proactive";
 import { log } from "./lib/logger";
 import { errorHandler, notFound } from "./lib/errors";
 import { checkReady, installShutdown, inFlightCount } from "./lib/lifecycle";
@@ -70,6 +73,11 @@ app.use(errorHandler);
 
 cron.schedule("30 3 * * *", () => {
   runRetentionPurge().catch((e) => log.error("retention job failed", { detail: String(e) }));
+});
+cron.schedule("*/5 * * * *", () => {
+  escalateStaleBookings().catch((e) => log.error("dining escalation failed", { detail: String(e) }));
+  expireWaitlistHolds().catch((e) => log.error("waitlist expiry failed", { detail: String(e) }));
+  sendDueTriggers().catch((e) => log.error("proactive send failed", { detail: String(e) }));
 });
 cron.schedule("0 * * * *", () => {
   runSelfHealing().catch((e) => log.error("self-heal job failed", { detail: String(e) }));

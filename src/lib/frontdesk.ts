@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { scheduleStayTriggers, cancelTriggersForSession } from "../proactive";
 
 export async function checkInGuest(hotelId: string, room: string, name: string, phone: string) {
   const guestPhone = phone.trim();
@@ -15,8 +16,12 @@ export async function checkInGuest(hotelId: string, room: string, name: string, 
     where: { hotelId, guestPhone, state: { not: "closed" } },
     orderBy: { createdAt: "desc" },
   });
-  if (existing) return prisma.session.update({ where: { id: existing.id }, data });
-  return prisma.session.create({ data: { hotelId, guestPhone, ...data } });
+  const session = existing
+    ? await prisma.session.update({ where: { id: existing.id }, data })
+    : await prisma.session.create({ data: { hotelId, guestPhone, ...data } });
+
+  await scheduleStayTriggers(hotelId, session.id, guestPhone, session.checkOutDate);
+  return session;
 }
 
 export async function checkOutGuest(hotelId: string, opts: { room?: string; phone?: string }) {
@@ -30,5 +35,6 @@ export async function checkOutGuest(hotelId: string, opts: { room?: string; phon
     orderBy: { createdAt: "desc" },
   });
   if (!session) return null;
+  await cancelTriggersForSession(session.id, "checked out");
   return prisma.session.update({ where: { id: session.id }, data: { state: "closed" } });
 }

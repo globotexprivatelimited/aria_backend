@@ -3,10 +3,14 @@ import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { WatiInbound } from "../lib/schemas";
 import { runSafetyChecks } from "../safety";
+import { runSession } from "../session";
 import { ensureConsentOnFirstContact, isWithdrawalKeyword, CONSENT_NOTICE } from "../privacy/consent";
 import { eraseGuestData } from "../privacy/erasure";
 import { sendReply } from "../lib/notify";
 import { log } from "../lib/logger";
+import { understand } from "../brain";
+import { executeRequests } from "../executor";
+import { isProactiveOptOut, optOutOfProactive } from "../proactive";
 
 export const watiRouter = Router();
 
@@ -83,7 +87,35 @@ watiRouter.post("/webhooks/wati/:hotelToken", async (req, res) => {
         log.info("safety handled - AI skipped", { phone: guestPhone, reason: safety.reason });
         return;
       }
-      log.info("pipeline: message ready for AI", { hotel: hotel.name, phone: guestPhone, type, body });
+      const { proceed, session } = await runSession(hotel, guestPhone, body);
+      if (!proceed) {
+        log.info("session handled - AI skipped", { phone: guestPhone, state: session.state });
+        return;
+      }
+
+      if (isProactiveOptOut(body)) {
+        await optOutOfProactive(session.id);
+        await sendReply(guestPhone, "Of course - I will not send you any unprompted messages. I am still here whenever you need something.", hotel.hotelId);
+        log.info("proactive: guest opted out", { phone: guestPhone });
+        return;
+      }
+
+      const { output, usedFallback } = await understand(body, hotel, session);
+
+      await sendReply(guestPhone, output.reply, hotel.hotelId);
+
+      const exec = await executeRequests(output, hotel, session, guestPhone, messageId);
+
+      log.info("brain result", {
+        phone: guestPhone,
+        room: session.roomNumber ?? "-",
+        requests: output.requests.map((r) => r.intent + ": " + r.detail).join(" | ") || "none",
+        sentiment: output.sentiment,
+        needsHuman: output.needsHuman,
+        usedFallback,
+        created: exec.created,
+        escalated: exec.escalated,
+      });
     });
   } catch (err) {
     log.error("wati handler error", { detail: err instanceof Error ? err.message : String(err) });
