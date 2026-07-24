@@ -7,6 +7,12 @@ import { maskPhone, redact } from "../privacy/redact";
 import { isWithdrawalKeyword, getConsent } from "../privacy/consent";
 import { eraseGuestData, exportGuestData } from "../privacy/erasure";
 import { checkInGuest } from "../lib/frontdesk";
+import { understand, isBrainEnabled } from "../brain";
+import { departmentFor, isBooking } from "../executor/routing";
+import { createDiningBooking } from "../dining";
+import { createActivityBooking, waitlistActivity, shortRef } from "../activities";
+import { schedule, isProactiveOptOut } from "../proactive";
+import { ensureConsentOnFirstContact } from "../privacy/consent";
 
 type Result = { id: string; name: string; status: "PASS" | "FAIL" | "PENDING"; note?: string };
 const results: Result[] = [];
@@ -129,10 +135,12 @@ async function main() {
     : fail("15", "Hotel-wide emergency mode flag is present");
 
   // 16 - consent recorded on first contact
-  const consent = await getConsent(HOTEL, newPhone);
+  const consentPhone = rnd();
+  await ensureConsentOnFirstContact(HOTEL, consentPhone);
+  const consent = await getConsent(HOTEL, consentPhone);
   consent && consent.status === "granted"
     ? pass("16", "Consent recorded when a guest first messages")
-    : pending("16", "Consent recorded when a guest first messages", "recorded in the webhook path, not runSession");
+    : fail("16", "Consent recorded when a guest first messages");
 
   // 17 - withdrawal keywords understood
   isWithdrawalKeyword("STOP") && isWithdrawalKeyword("delete my data") && !isWithdrawalKeyword("towels")
@@ -192,12 +200,56 @@ async function main() {
     ? pass("25", "Raw guest messages are stored for dispute resolution", kept + " messages")
     : fail("25", "Raw guest messages are stored for dispute resolution");
 
-  // --- not yet built: these depend on the Claude brain ---
-  pending("26", "Multi-intent decomposition (one message, several jobs)", "needs Prompt 4 - Claude brain");
-  pending("27", "Requests routed to the right department", "needs Prompt 7 - action executor");
-  pending("28", "Dining bookings held pending human confirmation", "needs Prompt 8");
-  pending("29", "Activity bookings and waitlist", "needs Prompt 9");
-  pending("30", "Proactive triggers", "needs Prompt 11");
+  // 26 - the brain splits one message into several jobs
+  if (!isBrainEnabled()) {
+    pending("26", "Multi-intent decomposition (one message, several jobs)", "ANTHROPIC_API_KEY not set");
+  } else {
+    const { output } = await understand(
+      "Can I get 2 towels, a table for two tonight, and the aircon is broken",
+      hotel,
+      { roomNumber: "412", claimedGuestName: "Audit Guest", roomVerified: true }
+    );
+    output.requests.length >= 3
+      ? pass("26", "Multi-intent decomposition (one message, several jobs)", output.requests.length + " requests")
+      : fail("26", "Multi-intent decomposition (one message, several jobs)", "got " + output.requests.length);
+  }
+
+  // 27 - each intent reaches the right team
+  departmentFor("housekeeping") === "housekeeping" &&
+  departmentFor("room_service") === "fb" &&
+  departmentFor("maintenance") === "maintenance" &&
+  departmentFor("concierge") === "front_desk" &&
+  isBooking("dining") && isBooking("spa") && isBooking("activities") && !isBooking("housekeeping")
+    ? pass("27", "Requests routed to the right department")
+    : fail("27", "Requests routed to the right department");
+
+  // 28 - a table is never confirmed by Aria alone
+  const dPhone = rnd();
+  const dSession = await checkInGuest(HOTEL, String(Math.floor(Math.random() * 800 + 100)), "Dining Audit", dPhone);
+  const dBooking = await createDiningBooking(hotel, dSession, dPhone, "table for two", 2, "tonight at 8");
+  dBooking.status === "pending" && dBooking.notified !== false
+    ? pass("28", "Dining bookings wait for a human to confirm", "ref " + dBooking.id.slice(0, 8))
+    : fail("28", "Dining bookings wait for a human to confirm", "status=" + dBooking.status);
+
+  // 29 - a full activity queues the guest instead of turning them away
+  const aPhone = rnd();
+  const aSession = await checkInGuest(HOTEL, String(Math.floor(Math.random() * 800 + 100)), "Activity Audit", aPhone);
+  const aBooking = await createActivityBooking(hotel, aSession, aPhone, "sunrise yoga", 1, "tomorrow");
+  const wl = await waitlistActivity(HOTEL, shortRef(aBooking.id), "audit");
+  wl.ok
+    ? pass("29", "A full activity puts the guest on a waitlist", wl.message)
+    : fail("29", "A full activity puts the guest on a waitlist", wl.message);
+
+  // 30 - Aria reaches out before the guest has to ask
+  const pPhone = rnd();
+  const pSession = await checkInGuest(HOTEL, String(Math.floor(Math.random() * 800 + 100)), "Proactive Audit", pPhone);
+  await schedule(HOTEL, pSession.id, pPhone, "welcome", new Date(Date.now() + 60000));
+  const trigger = await prisma.proactiveTrigger.findFirst({
+    where: { hotelId: HOTEL, sessionId: pSession.id, status: "pending" },
+  });
+  trigger && isProactiveOptOut("please stop messaging me") && !isProactiveOptOut("can I get towels")
+    ? pass("30", "Proactive messages are scheduled and can be opted out of")
+    : fail("30", "Proactive messages are scheduled and can be opted out of");
 
   // report
   const passed = results.filter((r) => r.status === "PASS").length;
