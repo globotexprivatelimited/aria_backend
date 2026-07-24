@@ -1,0 +1,28 @@
+# Environment - NEVER commit these
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Prisma generated client
+generated/
+
+# Logs
+*.log
+npm-debug.log*
+audit-report.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Test coverage
+coverage/

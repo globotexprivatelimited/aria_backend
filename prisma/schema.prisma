@@ -1,0 +1,366 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum SessionState {
+  prospect
+  active
+  flagged
+  closed
+  blocked
+}
+
+enum RequestCategory {
+  housekeeping
+  room_service
+  dining
+  activities
+  concierge
+  spa
+  maintenance
+  unclear
+}
+
+enum Department {
+  housekeeping
+  fb
+  dining
+  activities
+  spa
+  maintenance
+  front_desk
+  gm
+  events
+}
+
+enum RequestPriority {
+  normal
+  urgent
+  human_required
+  emergency
+}
+
+enum RequestStatus {
+  received
+  in_progress
+  resolved
+}
+
+enum DiningStatus {
+  pending
+  confirmed
+  alternative_offered
+  declined
+  cancelled
+}
+
+enum ActivityType {
+  scheduled_group
+  scheduled_private
+  flexible_private
+}
+
+enum ActivityStatus {
+  pending
+  confirmed
+  waitlisted
+  cancelled
+}
+
+enum VerificationMethod {
+  front_desk_match
+  self_reported_unverified
+}
+
+enum ProactiveTriggerType {
+  welcome
+  evening_nudge
+  pre_checkout
+  feedback
+  activity_reminder
+  post_activity_upsell
+}
+
+enum ProactiveStatus {
+  pending
+  sent
+  cancelled
+}
+
+model Hotel {
+  id                  String   @id @default(uuid())
+  hotelId             String   @unique
+  name                String
+  whatsappNumber      String   @unique
+  webhookToken        String   @unique @default(cuid())
+  knowledgeBaseUrl    String?
+  checkInTime         String?
+  checkOutTime        String?
+  timezone            String   @default("Asia/Kolkata")
+  googleReviewLink    String?
+  revenueSharePercent Decimal  @default(0) @db.Decimal(5, 2)
+  isActive            Boolean  @default(true)
+  isTestMode          Boolean  @default(false)
+  emergencyMode       Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  sessions          Session[]
+  requests          Request[]
+  diningBookings    DiningBooking[]
+  activityBookings  ActivityBooking[]
+  waitlist          ActivityWaitlist[]
+  proactiveTriggers ProactiveTrigger[]
+  staffContacts     StaffContact[]
+  messages          Message[]
+  consents        GuestConsent[]
+  erasureRequests ErasureRequest[]
+}
+
+model Session {
+  id                  String              @id @default(uuid())
+  hotelId             String
+  guestPhone          String
+  roomNumber          String?
+  guestName           String?
+  countryCode         String?
+  checkInDate         DateTime?           @db.Date
+  checkOutDate        DateTime?           @db.Date
+  customCheckoutTime  String?
+  conversationHistory Json                @default("[]")
+  state               SessionState        @default(prospect)
+  roomVerified        Boolean             @default(false)
+  claimedGuestName    String?
+  verificationMethod  VerificationMethod?
+  noShowCount         Int                 @default(0)
+  consentGiven        Boolean             @default(false)
+  proactiveOptedOut   Boolean             @default(false)
+  pendingFollowUps    Json                @default("[]")
+  lastMessageAt       DateTime?
+  blockedUntil        DateTime?
+  isTest              Boolean             @default(false)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  hotel             Hotel              @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+  requests          Request[]
+  diningBookings    DiningBooking[]
+  activityBookings  ActivityBooking[]
+  proactiveTriggers ProactiveTrigger[]
+  messages          Message[]
+
+  @@unique([hotelId, guestPhone, checkInDate])
+  @@index([hotelId, guestPhone, state])
+}
+
+model Request {
+  id                 String           @id @default(uuid())
+  hotelId            String
+  sessionId          String?
+  roomNumber         String?
+  guestPhone         String
+  messageId          String?
+  intent             RequestCategory?
+  department         Department?
+  requestDetail      String?
+  ariaInterpretation String?
+  priority           RequestPriority  @default(normal)
+  status             RequestStatus    @default(received)
+  claimedBy          String?
+  revenueGenerated   Decimal          @default(0) @db.Decimal(10, 2)
+  upsellOffered      Boolean          @default(false)
+  upsellItem         String?
+  upsellConverted    Boolean          @default(false)
+  deliveryLocation   String?
+  notified           Boolean          @default(false)
+  isTest             Boolean          @default(false)
+  resolvedAt         DateTime?
+  createdAt          DateTime         @default(now())
+
+  hotel   Hotel    @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  @@index([hotelId, status, createdAt])
+  @@index([messageId])
+  @@index([intent])
+}
+
+model DiningBooking {
+  id                String       @id @default(uuid())
+  hotelId           String
+  sessionId         String?
+  roomNumber        String?
+  guestPhone        String
+  venueName         String?
+  partySize         Int?
+  bookingDate       DateTime?    @db.Date
+  bookingTime       String?
+  occasionType      String?
+  specialRequests   String?
+  status            DiningStatus @default(pending)
+  managerNotes      String?
+  revenueGenerated  Decimal      @default(0) @db.Decimal(10, 2)
+  notified          Boolean      @default(false)
+  managerNotifiedAt DateTime?
+  confirmedAt       DateTime?
+  escalatedAt       DateTime?
+  isTest            Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+
+  hotel   Hotel    @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  @@index([hotelId, status, bookingDate])
+}
+
+model ActivityBooking {
+  id                  String         @id @default(uuid())
+  hotelId             String
+  sessionId           String?
+  activityName        String?
+  activityType        ActivityType?
+  indoorOutdoor       String?
+  guestPhone          String
+  roomNumber          String?
+  partySize           Int?
+  activityDate        DateTime?      @db.Date
+  activityTime        String?
+  preferredTime       String?
+  status              ActivityStatus @default(pending)
+  pricePerPerson      Decimal        @default(0) @db.Decimal(10, 2)
+  totalRevenue        Decimal        @default(0) @db.Decimal(10, 2)
+  specialRequirements String?
+  vendorConfirmed     Boolean        @default(false)
+  coordinatorNotified Boolean        @default(false)
+  notified            Boolean        @default(false)
+  preparationSent     Boolean        @default(false)
+  reminderSent        Boolean        @default(false)
+  postUpsellSent      Boolean        @default(false)
+  cancellationReason  String?
+  rebookedFrom        String?
+  isTest              Boolean        @default(false)
+  createdAt           DateTime       @default(now())
+
+  hotel   Hotel    @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  @@index([hotelId, status, activityDate, activityName])
+}
+
+model ActivityWaitlist {
+  id           String    @id @default(uuid())
+  hotelId      String
+  activityName String?
+  activityDate DateTime? @db.Date
+  guestPhone   String
+  roomNumber   String?
+  partySize    Int?
+  position     Int?
+  notifiedAt   DateTime?
+  holdUntil    DateTime?
+  createdAt    DateTime  @default(now())
+
+  hotel Hotel @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+
+  @@index([hotelId, activityName, activityDate])
+}
+
+model ProactiveTrigger {
+  id          String               @id @default(uuid())
+  hotelId     String
+  sessionId   String?
+  guestPhone  String
+  triggerType ProactiveTriggerType
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  status      ProactiveStatus      @default(pending)
+  createdAt   DateTime             @default(now())
+
+  hotel   Hotel    @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  @@index([status, scheduledAt])
+}
+
+model StaffContact {
+  id              String      @id @default(uuid())
+  hotelId         String
+  department      Department?
+  staffName       String?
+  whatsappNumber  String?
+  isOnCall        Boolean     @default(false)
+  isActive        Boolean     @default(true)
+  lastConfirmedAt DateTime?
+  createdAt       DateTime    @default(now())
+
+  hotel Hotel @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+
+  @@index([hotelId, department])
+}
+
+model ProcessedMessage {
+  id          String   @id @default(uuid())
+  messageId   String   @unique
+  hotelId     String
+  processedAt DateTime @default(now())
+}
+
+model Message {
+  id          String   @id @default(uuid())
+  hotelId     String
+  sessionId   String?
+  guestPhone  String
+  waId        String?
+  messageId   String?
+  direction   String   @default("inbound")
+  messageType String?
+  body        String?
+  createdAt   DateTime @default(now())
+
+  hotel   Hotel    @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  @@index([hotelId, guestPhone, createdAt])
+}
+
+enum ConsentStatus {
+  pending
+  granted
+  withdrawn
+}
+
+model GuestConsent {
+  id            String        @id @default(uuid())
+  hotelId       String
+  guestPhone    String
+  status        ConsentStatus @default(pending)
+  noticeVersion String        @default("v1")
+  grantedAt     DateTime?
+  withdrawnAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  hotel Hotel @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+
+  @@unique([hotelId, guestPhone])
+  @@index([hotelId, status])
+}
+
+model ErasureRequest {
+  id          String    @id @default(uuid())
+  hotelId     String
+  guestPhone  String
+  requestedAt DateTime  @default(now())
+  completedAt DateTime?
+  recordsWiped Int      @default(0)
+  requestedBy String?
+
+  hotel Hotel @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
+
+  @@index([hotelId, guestPhone])
+}
