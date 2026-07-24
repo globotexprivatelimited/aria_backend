@@ -65,13 +65,13 @@ export async function createDiningBooking(
       ". Reply CONFIRM " + ref + " / ALT " + ref + " <time> / DECLINE " + ref
   );
 
-  await prisma.diningBooking.update({
+  const updated = await prisma.diningBooking.update({
     where: { id: booking.id },
     data: { notified: true, managerNotifiedAt: new Date() },
   });
 
   log.info("dining: booking created pending confirmation", { bookingId: booking.id, ref, room });
-  return booking;
+  return updated;
 }
 
 async function findByRef(hotelId: string, ref: string) {
