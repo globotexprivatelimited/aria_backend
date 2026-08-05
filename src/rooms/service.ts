@@ -121,3 +121,51 @@ export async function roomStats(hotelId: string): Promise<Result<any>> {
     return { ok: true, data: { total, ...by, occupancyPct: total ? Math.round((by.occupied / total) * 100) : 0 } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not load stats." }; }
 }
+
+export async function editRoom(hotelId: string, roomNumber: string, changes: { room_type?: string; floor?: number; newNumber?: string }): Promise<Result<any>> {
+  if (!hotelId || !roomNumber) return { ok: false, error: "roomNumber required" };
+  try {
+    if (changes.newNumber && changes.newNumber !== roomNumber) {
+      const clash = await prisma.$queryRawUnsafe<any[]>(`select 1 from rooms where hotel_id=$1 and room_number=$2`, hotelId, changes.newNumber);
+      if (clash[0]) return { ok: false, error: "Room " + changes.newNumber + " already exists." };
+    }
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `update rooms set room_type=coalesce($3, room_type), floor=coalesce($4, floor), room_number=coalesce($5, room_number)
+       where hotel_id=$1 and room_number=$2 returning *`,
+      hotelId, roomNumber, changes.room_type ?? null, changes.floor ?? null, changes.newNumber ?? null);
+    if (!rows[0]) return { ok: false, error: "Room not found." };
+    return { ok: true, data: norm(rows[0]) };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not edit room." }; }
+}
+
+export async function deleteRoom(hotelId: string, roomNumber: string): Promise<Result<{ deleted: boolean }>> {
+  if (!hotelId || !roomNumber) return { ok: false, error: "roomNumber required" };
+  try {
+    const chk = await prisma.$queryRawUnsafe<any[]>(`select status from rooms where hotel_id=$1 and room_number=$2`, hotelId, roomNumber);
+    if (!chk[0]) return { ok: false, error: "Room not found." };
+    if (chk[0].status === 'occupied') return { ok: false, error: "Check the guest out before deleting this room." };
+    await prisma.$executeRawUnsafe(`delete from rooms where hotel_id=$1 and room_number=$2`, hotelId, roomNumber);
+    return { ok: true, data: { deleted: true } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not delete room." }; }
+}
+
+export async function clearFloor(hotelId: string, floor: number): Promise<Result<{ deleted: number }>> {
+  if (!hotelId || floor == null) return { ok: false, error: "floor required" };
+  try {
+    const occ = await prisma.$queryRawUnsafe<any[]>(`select count(*) n from rooms where hotel_id=$1 and floor=$2 and status='occupied'`, hotelId, floor);
+    if (Number(occ[0].n) > 0) return { ok: false, error: "Floor " + floor + " has occupied rooms. Check those guests out first." };
+    const before = await prisma.$queryRawUnsafe<any[]>(`select count(*) n from rooms where hotel_id=$1 and floor=$2`, hotelId, floor);
+    await prisma.$executeRawUnsafe(`delete from rooms where hotel_id=$1 and floor=$2`, hotelId, floor);
+    return { ok: true, data: { deleted: Number(before[0].n) } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not clear floor." }; }
+}
+
+// the room_count the GM entered at registration - the target to organize
+export async function hotelRoomTarget(hotelId: string): Promise<Result<{ target: number; created: number }>> {
+  if (!hotelId) return { ok: false, error: "hotelId required" };
+  try {
+    const h = await prisma.$queryRawUnsafe<any[]>(`select room_count from "Hotel" where "hotelId"=$1`, hotelId);
+    const created = await prisma.$queryRawUnsafe<any[]>(`select count(*) n from rooms where hotel_id=$1`, hotelId);
+    return { ok: true, data: { target: Number(h[0]?.room_count ?? 0), created: Number(created[0].n) } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}
