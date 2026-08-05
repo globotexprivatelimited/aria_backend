@@ -16,6 +16,8 @@ import { menuRouter } from "./routes/menu";
 import { slotsRouter } from "./routes/slots";
 import { requestsRouter } from "./routes/requests";
 import { authRouter } from "./routes/auth";
+import { revenueRouter } from "./routes/revenue";
+import { roomsRouter } from "./routes/rooms";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
 import { escalateStaleBookings } from "./dining";
@@ -71,6 +73,8 @@ app.use(menuRouter);
 app.use(slotsRouter);
 app.use(requestsRouter);
 app.use(authRouter);
+app.use(revenueRouter);
+app.use(roomsRouter);
 
 app.use(
   "/docs",

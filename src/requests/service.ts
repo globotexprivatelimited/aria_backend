@@ -84,3 +84,15 @@ export async function listAllSince(days = 30): Promise<Result<any[]>> {
     return { ok: true, data: rows.map(norm) };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not load." }; }
 }
+
+// GM dashboard: all requests for ONE hotel over the last N days (for charts)
+export async function listHotelSince(hotelId: string, days = 7): Promise<Result<any[]>> {
+  if (!hotelId) return { ok: true, data: [] };
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `select * from "Request" where "hotelId" = $1 and "createdAt" >= now() - ($2 || ' days')::interval order by "createdAt" desc limit 3000`,
+      hotelId, String(days)
+    );
+    return { ok: true, data: rows.map(norm) };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not load." }; }
+}
