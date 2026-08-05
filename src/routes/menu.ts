@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { listMenu, createMenuItem, updateMenuItem, deleteMenuItem, placeOrder } from "../menu/service";
+import { listMenu, createMenuItem, updateMenuItem, deleteMenuItem, placeOrder, setMenuAvailability } from "../menu/service";
 
 export const menuRouter = Router();
 const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
@@ -67,4 +67,10 @@ menuRouter.post("/api/menu/order", async (req, res) => {
   if (!hotelId || !dept || !items) return res.status(400).json({ error: "hotelId, dept, items required" });
   const r = await placeOrder(hotelId, dept, { room, guestPhone, items });
   return res.status(r.ok ? 200 : 400).json(r);
+});
+
+menuRouter.post("/api/menu/availability", async (req, res) => {
+  if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
+  const { hotelId, id, available } = req.body ?? {};
+  const r = await setMenuAvailability(hotelId, id, !!available); return res.status(r.ok ? 200 : 400).json(r);
 });

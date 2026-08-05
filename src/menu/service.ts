@@ -1,4 +1,4 @@
-﻿import { prisma } from "../db";
+import { prisma } from "../db";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -120,4 +120,14 @@ export async function placeOrder(hotelId: string, dept: string, opts: { room?: s
     }
     return { ok: true, data: { order: { ...order, total: Number(order.total) }, lowStock } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not place order." }; }
+}
+
+// toggle an item available/unavailable (separate from stock)
+export async function setMenuAvailability(hotelId: string, id: string, available: boolean): Promise<Result<any>> {
+  if (!hotelId || !id) return { ok: false, error: "id required" };
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(`update menu_items set available=$3 where id=$1::uuid and hotel_id=$2 returning *`, id, hotelId, available);
+    if (!rows[0]) return { ok: false, error: "Item not found." };
+    return { ok: true, data: rows[0] };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not update." }; }
 }
