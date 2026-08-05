@@ -2,6 +2,7 @@ import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { notifyDepartment, notifyGM, notifyFrontDesk } from "../lib/notify";
 import { departmentFor, isBooking, needsHumanJudgement, type Dept } from "./routing";
+import { deptType, acknowledgementFor } from "./departmentModel";
 import type { BrainOutput } from "../brain/schema";
 import { canDoRevenueAction } from "../session";
 import { createDiningBooking } from "../dining";
@@ -97,9 +98,11 @@ export async function executeRequests(
     if (booking) result.bookings += 1;
 
     const room = session.roomNumber ?? "unknown";
+    const dtype = deptType(dept);
+    const actionHint = dtype === "auto" || dtype === "maintenance" ? "Actions: CLAIM / DONE / PROBLEM" : "Actions: ACCEPT / DECLINE <reason> / ALTERNATIVE <option>";
     const urgency = r.priority === "urgent" ? "[URGENT] " : "";
     const line =
-      urgency + "Room " + room + " - " + r.detail + (r.whenText ? " (" + r.whenText + ")" : "");
+      urgency + "[" + created.id.slice(0, 8) + "] Room " + room + " - " + r.detail + (r.whenText ? " (" + r.whenText + ")" : "") + " | " + actionHint;
 
     await notifyDepartment(hotel.hotelId, dept, line);
     await prisma.request.update({ where: { id: created.id }, data: { notified: true } });

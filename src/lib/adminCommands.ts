@@ -8,6 +8,12 @@ export type AdminCommand =
   | { kind: "decline"; ref: string; reason?: string }
   | { kind: "waitlist"; ref: string }
   | { kind: "cancel"; ref: string }
+  | { kind: "accept"; ref: string }
+  | { kind: "decline_req"; ref: string; reason?: string }
+  | { kind: "alternative"; ref: string; option: string }
+  | { kind: "claim"; ref: string }
+  | { kind: "done"; ref: string }
+  | { kind: "problem"; ref: string; reason?: string }
   | { kind: "help" }
   | { kind: "unknown" };
 
@@ -36,6 +42,39 @@ export function parseAdminCommand(text: string): AdminCommand {
   if (head === "CANCEL") {
     const ref = parts[1];
     if (ref) return { kind: "cancel", ref };
+    return { kind: "unknown" };
+  }
+  if (head === "ACCEPT") {
+    const ref = parts[1];
+    if (ref) return { kind: "accept", ref };
+    return { kind: "unknown" };
+  }
+  if (head === "ALTERNATIVE" || head === "ALT2") {
+    const ref = parts[1];
+    const option = parts.slice(2).join(" ");
+    if (ref && option) return { kind: "alternative", ref, option };
+    return { kind: "unknown" };
+  }
+  if (head === "CLAIM") {
+    const ref = parts[1];
+    if (ref) return { kind: "claim", ref };
+    return { kind: "unknown" };
+  }
+  if (head === "DONE") {
+    const ref = parts[1];
+    if (ref) return { kind: "done", ref };
+    return { kind: "unknown" };
+  }
+  if (head === "PROBLEM") {
+    const ref = parts[1];
+    const reason = parts.slice(2).join(" ");
+    if (ref) return { kind: "problem", ref, reason: reason || undefined };
+    return { kind: "unknown" };
+  }
+  if (head === "REJECT") {
+    const ref = parts[1];
+    const reason = parts.slice(2).join(" ");
+    if (ref) return { kind: "decline_req", ref, reason: reason || undefined };
     return { kind: "unknown" };
   }
   if (head === "CONFIRM") {

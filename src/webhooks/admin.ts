@@ -7,6 +7,7 @@ import { parseAdminCommand } from "../lib/adminCommands";
 import { checkInGuest, checkOutGuest } from "../lib/frontdesk";
 import { confirmBooking, offerAlternative, declineBooking } from "../dining";
 import { confirmActivity, waitlistActivity, declineActivity, cancelActivity } from "../activities";
+import { acceptRequest, declineRequest, proposeAlternative, claimRequest, completeRequest, problemRequest } from "../executor/actions";
 import { log } from "../lib/logger";
 
 export const adminRouter = Router();
@@ -65,8 +66,26 @@ adminRouter.post("/webhooks/admin/:hotelToken", async (req, res) => {
     } else if (cmd.kind === "cancel") {
       const r = await cancelActivity(hotel.hotelId, cmd.ref, staff.staffName);
       await sendReply(sender, r.message, hotel.hotelId);
+    } else if (cmd.kind === "accept") {
+      const r = await acceptRequest(hotel.hotelId, cmd.ref, staff.staffName);
+      await sendReply(sender, r.message, hotel.hotelId);
+    } else if (cmd.kind === "decline_req") {
+      const r = await declineRequest(hotel.hotelId, cmd.ref, staff.staffName, cmd.reason);
+      await sendReply(sender, r.message, hotel.hotelId);
+    } else if (cmd.kind === "alternative") {
+      const r = await proposeAlternative(hotel.hotelId, cmd.ref, staff.staffName, cmd.option);
+      await sendReply(sender, r.message, hotel.hotelId);
+    } else if (cmd.kind === "claim") {
+      const r = await claimRequest(hotel.hotelId, cmd.ref, staff.staffName);
+      await sendReply(sender, r.message, hotel.hotelId);
+    } else if (cmd.kind === "done") {
+      const r = await completeRequest(hotel.hotelId, cmd.ref, staff.staffName);
+      await sendReply(sender, r.message, hotel.hotelId);
+    } else if (cmd.kind === "problem") {
+      const r = await problemRequest(hotel.hotelId, cmd.ref, staff.staffName, cmd.reason);
+      await sendReply(sender, r.message, hotel.hotelId);
     } else if (cmd.kind === "help") {
-      await sendReply(sender, "Commands: EMERGENCY MODE ON/OFF | CHECKIN <room> <phone> <name> | CHECKOUT <room-or-phone> | CONFIRM <ref> [amount] | ALT <ref> <time> | DECLINE <ref> [reason] | WAITLIST <ref> | CANCEL <ref>", hotel.hotelId);
+      await sendReply(sender, "Commands: EMERGENCY MODE ON/OFF | CHECKIN <room> <phone> <name> | CHECKOUT <room-or-phone> | CONFIRM <ref> [amount] | ALT <ref> <time> | DECLINE <ref> [reason] | WAITLIST <ref> | CANCEL <ref> | ACCEPT <ref> | REJECT <ref> <reason> | ALTERNATIVE <ref> <option> | CLAIM <ref> | DONE <ref> | PROBLEM <ref>", hotel.hotelId);
     } else {
       await sendReply(sender, "Command not recognized. Text HELP for the list.", hotel.hotelId);
     }

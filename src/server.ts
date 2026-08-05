@@ -9,6 +9,13 @@ import { adminRouter } from "./webhooks/admin";
 import { frontdeskRouter } from "./routes/frontdesk";
 import { dashboardRouter } from "./routes/dashboard";
 import { privacyRouter } from "./routes/privacy";
+import { universalRouter } from "./routes/universal";
+import { onboardingRouter } from "./routes/onboarding";
+import { registerRouter } from "./routes/register";
+import { menuRouter } from "./routes/menu";
+import { slotsRouter } from "./routes/slots";
+import { requestsRouter } from "./routes/requests";
+import { authRouter } from "./routes/auth";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
 import { escalateStaleBookings } from "./dining";
@@ -57,6 +64,13 @@ app.use(adminRouter);
 app.use(frontdeskRouter);
 app.use(dashboardRouter);
 app.use(privacyRouter);
+app.use(universalRouter);
+app.use(onboardingRouter);
+app.use(registerRouter);
+app.use(menuRouter);
+app.use(slotsRouter);
+app.use(requestsRouter);
+app.use(authRouter);
 
 app.use(
   "/docs",
