@@ -19,6 +19,7 @@ import { authRouter } from "./routes/auth";
 import { revenueRouter } from "./routes/revenue";
 import { roomsRouter } from "./routes/rooms";
 import { deptItemsRouter } from "./routes/deptitems";
+import { staffAccessRouter } from "./routes/staffaccess";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
 import { escalateStaleBookings } from "./dining";
@@ -77,6 +78,7 @@ app.use(authRouter);
 app.use(revenueRouter);
 app.use(roomsRouter);
 app.use(deptItemsRouter);
+app.use(staffAccessRouter);
 
 app.use(
   "/docs",
