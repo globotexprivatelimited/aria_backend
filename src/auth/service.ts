@@ -1,4 +1,4 @@
-﻿import { prisma } from "../db";
+import { prisma } from "../db";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
@@ -41,7 +41,7 @@ export function verifyToken(token: string): SessionUser | null {
 // departments for a staff user
 export async function getDepartments(staffUserId: string): Promise<string[]> {
   try {
-    const rows = await prisma.$queryRawUnsafe<any[]>(`select dept from staff_departments where staff_user_id = $1::uuid`, staffUserId);
+    const rows = await prisma.$queryRawUnsafe<any[]>(`select dept from staff_departments where staff_user_id = $1::uuid and active = true`, staffUserId);
     return rows.map((r) => r.dept);
   } catch { return []; }
 }
