@@ -1,4 +1,4 @@
-import { prisma } from "../db";
+﻿import { prisma } from "../db";
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 const ALL_DEPTS = [
@@ -6,8 +6,6 @@ const ALL_DEPTS = [
   { dept: "housekeeping", label: "Housekeeping" },
   { dept: "spa", label: "Spa" },
   { dept: "front_desk", label: "Front Desk" },
-  { dept: "dining", label: "Dining" },
-  { dept: "maintenance", label: "Maintenance" },
 ];
 
 export async function ensureStaffActiveColumn(): Promise<void> {

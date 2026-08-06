@@ -53,3 +53,11 @@ export async function getHotelName(hotelId: string): Promise<string> {
     return rows[0]?.name ?? hotelId;
   } catch { return hotelId; }
 }
+
+// the hotel's webhook token - staff actions post to this hotel, not a demo one
+export async function getWebhookToken(hotelId: string): Promise<string> {
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(`select "webhookToken" from "Hotel" where "hotelId" = $1 limit 1`, hotelId);
+    return rows[0]?.webhookToken ?? "";
+  } catch { return ""; }
+}

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { login, verifyToken, getDepartments, getHotelName } from "../auth/service";
+import { login, verifyToken, getDepartments, getHotelName, getWebhookToken } from "../auth/service";
 
 export const authRouter = Router();
 
@@ -16,8 +16,8 @@ authRouter.get("/api/auth/me", async (req, res) => {
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   const user = verifyToken(token);
   if (!user) return res.status(401).json({ ok: false, error: "invalid token" });
-  const [departments, hotelName] = await Promise.all([getDepartments(user.staffUserId), getHotelName(user.hotelId)]);
-  return res.json({ ok: true, data: { ...user, departments, hotelName } });
+  const [departments, hotelName, webhookToken] = await Promise.all([getDepartments(user.staffUserId), getHotelName(user.hotelId), getWebhookToken(user.hotelId)]);
+  return res.json({ ok: true, data: { ...user, departments, hotelName, webhookToken } });
 });
 
 // GM/admin sets a staff member's password in OUR auth system (by email), behind admin key
