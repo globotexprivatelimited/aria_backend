@@ -40,7 +40,7 @@ export async function createGM(email: string, password: string, fullName: string
 
 export async function createHotel(gmAuthUserId: string, details: {
   name: string; address?: string; city?: string;
-  roomCount?: number; checkInTime?: string; checkOutTime?: string; contactPhone?: string; contactEmail?: string;
+  roomCount?: number; checkInTime?: string; checkOutTime?: string; contactPhone?: string;
 }): Promise<Result<{ hotelId: string }>> {
   // allocate the next sequential hotel number (1, 2, 3...) - unique regardless of name
   const hotelId = String(await nextHotelNumber());
@@ -50,11 +50,11 @@ export async function createHotel(gmAuthUserId: string, details: {
     const waNumber = details.contactPhone ?? ("pending-" + hotelId);
     console.log("HOTEL INSERT >>> id:", hotelRowId, "hotelId:", hotelId, "name:", JSON.stringify(details.name), "wa:", waNumber);
     await prisma.$executeRawUnsafe(
-      `insert into "Hotel" ("id", "hotelId", name, "whatsappNumber", "webhookToken", address, city, room_count, check_in_time, check_out_time, contact_phone, contact_email, onboarded)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
-       on conflict ("hotelId") do update set name=$3, address=$6, city=$7, room_count=$8, check_in_time=$9, check_out_time=$10, contact_phone=$11, contact_email=$12, onboarded=true`,
+      `insert into "Hotel" ("id", "hotelId", name, "whatsappNumber", "webhookToken", address, city, room_count, check_in_time, check_out_time, contact_phone, onboarded)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
+       on conflict ("hotelId") do update set name=$3, address=$6, city=$7, room_count=$8, check_in_time=$9, check_out_time=$10, contact_phone=$11, onboarded=true`,
       hotelRowId, hotelId, details.name, waNumber, token, details.address ?? null, details.city ?? null,
-      details.roomCount ?? null, details.checkInTime ?? null, details.checkOutTime ?? null, details.contactPhone ?? null, details.contactEmail ?? null
+      details.roomCount ?? null, details.checkInTime ?? null, details.checkOutTime ?? null, details.contactPhone ?? null
     );
     console.log("LINKING GM >>> hotelId:", hotelId, "gmAuthUserId:", gmAuthUserId);
     await prisma.$executeRawUnsafe(

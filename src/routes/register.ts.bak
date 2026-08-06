@@ -43,7 +43,7 @@ registerRouter.post("/api/register", async (req, res) => {
   const hotel = await createHotel(gmAuthUserId, {
     name: hotelName, address, city,
     roomCount: roomCount ? Number(roomCount) : undefined,
-    checkInTime, checkOutTime, contactPhone, contactEmail: email,
+    checkInTime, checkOutTime, contactPhone,
   });
   if (!hotel.ok) return res.status(400).json({ ok: false, error: hotel.error });
   const hotelId = hotel.data.hotelId;
