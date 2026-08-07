@@ -52,7 +52,7 @@ export async function checkInRoom(hotelId: string, roomNumber: string, opts: { g
       `update rooms set status='occupied', guest_name=$3, guest_phone=$4, party_size=$5,
               check_in=coalesce($7::timestamptz, now()), check_out=$6::timestamptz, notes=coalesce($8, notes)
        where hotel_id=$1 and room_number=$2 returning *`,
-      hotelId, roomNumber, opts.guestName ?? null, (opts.guestPhone ?? "").replace(/[^0-9+]/g, "") || null, opts.partySize ?? null, opts.checkOut ?? null,
+      hotelId, roomNumber, opts.guestName ?? null, (opts.guestPhone ?? "").replace(/[^0-9+]/g, "") || null, opts.partySize ?? 1, opts.checkOut ?? null,
       opts.checkIn ?? null, opts.notes ?? null);
     if (!rows[0]) return { ok: false, error: "Room not found." };
 
