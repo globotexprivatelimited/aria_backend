@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createGM, createHotel, setDepartments } from "../onboarding/service";
+import { sendActivation } from "../emailverify/service";
 
 export const registerRouter = Router();
 
@@ -47,6 +48,9 @@ registerRouter.post("/api/register", async (req, res) => {
   });
   if (!hotel.ok) return res.status(400).json({ ok: false, error: hotel.error });
   const hotelId = hotel.data.hotelId;
+
+  // confirm the address we will use for resets and notices (fire and forget)
+  sendActivation(hotelId).catch(() => {});
 
   // 3. set the departments the hotel runs
   const depts = await setDepartments(hotelId, departments.map((d: { dept: string; staffNumber?: string }) => ({ dept: d.dept, staffNumber: d.staffNumber })));

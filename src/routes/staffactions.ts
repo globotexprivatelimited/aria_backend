@@ -27,7 +27,7 @@ staffActionsRouter.post("/api/staff/request-action", async (req, res) => {
     const depts = await prisma.$queryRawUnsafe<any[]>(
       `select dept from staff_departments where staff_user_id::text = $1 and active = true`, user.staffUserId);
     const allowed = depts.map((d: any) => d.dept);
-    if (!allowed.includes(reqRow.department)) return res.status(403).json({ ok: false, error: "Not your department." });
+    if (user.role !== "gm" && !allowed.includes(reqRow.department)) return res.status(403).json({ ok: false, error: "Not your department." });
 
     const who = user.fullName || "Staff";
     const cmd = String(command).toUpperCase();
