@@ -280,3 +280,125 @@ export async function getAllPeople(): Promise<Result<{ people: PersonRow[]; tota
     } } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "people failed" }; }
 }
+
+export type Insights = {
+  series: { date: string; label: string; revenue: number; requests: number; resolved: number }[];
+  growth: { month: string; hotels: number; cumulative: number }[];
+  speed: { avgResponseMins: number | null; avgResolveMins: number | null;
+           byHotel: { hotelId: string; name: string; response: number | null; resolve: number | null; handled: number }[] };
+  demand: { item: string; times: number; revenue: number }[];
+  gaps: { item: string; times: number; loss: number; hotels: number }[];
+  byDepartment: { dept: string; requests: number; revenue: number; declined: number }[];
+  activity: { hotelId: string; hotelName: string; room: string | null; detail: string | null;
+              dept: string | null; status: string; at: string }[];
+  attention: { hotelId: string; name: string; issue: string; severity: "high" | "medium" }[];
+};
+
+/** The deeper platform picture - trends, speed, demand and what needs a look. */
+export async function getInsights(days = 30): Promise<Result<Insights>> {
+  try {
+    const hotels = await prisma.$queryRawUnsafe<any[]>(`select "hotelId", name, "createdAt", "isActive" from "Hotel"`);
+    const nameOf = (id: string) => hotels.find((h) => String(h.hotelId) === String(id))?.name ?? id;
+
+    const reqs = await prisma.$queryRawUnsafe<any[]>(
+      `select "hotelId", "roomNumber", "requestDetail", department::text dept, status::text status,
+              coalesce(declined,false) declined, coalesce("revenueGenerated",0)::float revenue,
+              "createdAt", "claimedAt", "resolvedAt"
+         from "Request" where "createdAt" > now() - ($1 || ' days')::interval
+        order by "createdAt" desc`, String(days));
+
+    // daily series
+    const byDay = new Map<string, { revenue: number; requests: number; resolved: number }>();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
+      byDay.set(d.toISOString().slice(0, 10), { revenue: 0, requests: 0, resolved: 0 });
+    }
+    for (const r of reqs) {
+      const k = new Date(r.createdAt).toISOString().slice(0, 10);
+      const e = byDay.get(k); if (!e) continue;
+      e.requests += 1; e.revenue += r.revenue;
+      if (r.status === "resolved") e.resolved += 1;
+    }
+    const series = Array.from(byDay.entries()).map(([date, v]) => ({
+      date, label: new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" }), ...v,
+    }));
+
+    // hotels joining over time
+    const gMap = new Map<string, number>();
+    for (const h of hotels) {
+      const k = new Date(h.createdAt).toISOString().slice(0, 7);
+      gMap.set(k, (gMap.get(k) ?? 0) + 1);
+    }
+    let run = 0;
+    const growth = Array.from(gMap.entries()).sort().map(([month, n]) => { run += n; return { month, hotels: n, cumulative: run }; });
+
+    // speed
+    const mins = (a: any, b: any) => a && b ? (new Date(b).getTime() - new Date(a).getTime()) / 60000 : null;
+    const avg = (xs: number[]) => xs.length ? Math.round(xs.reduce((s, x) => s + x, 0) / xs.length) : null;
+    const allResp = reqs.map((r) => mins(r.createdAt, r.claimedAt)).filter((x): x is number => x != null && x >= 0);
+    const allRes = reqs.map((r) => mins(r.createdAt, r.resolvedAt)).filter((x): x is number => x != null && x >= 0);
+    const speedByHotel = hotels.map((h) => {
+      const hr = reqs.filter((r) => String(r.hotelId) === String(h.hotelId));
+      return {
+        hotelId: String(h.hotelId), name: h.name,
+        response: avg(hr.map((r) => mins(r.createdAt, r.claimedAt)).filter((x): x is number => x != null && x >= 0)),
+        resolve: avg(hr.map((r) => mins(r.createdAt, r.resolvedAt)).filter((x): x is number => x != null && x >= 0)),
+        handled: hr.filter((r) => r.status === "resolved").length,
+      };
+    }).filter((x) => x.handled > 0);
+
+    // what guests ask for
+    const dMap = new Map<string, { times: number; revenue: number }>();
+    for (const r of reqs) {
+      const key = String(r.requestDetail ?? "").trim().toLowerCase().slice(0, 60);
+      if (!key) continue;
+      const e = dMap.get(key) ?? { times: 0, revenue: 0 };
+      e.times += 1; e.revenue += r.revenue; dMap.set(key, e);
+    }
+    const demand = Array.from(dMap.entries()).map(([item, v]) => ({ item, ...v })).sort((a, b) => b.times - a.times).slice(0, 10);
+
+    // gaps across the platform
+    let gaps: Insights["gaps"] = [];
+    try {
+      const g = await prisma.$queryRawUnsafe<any[]>(
+        `select lower(requested_item) item, count(*)::int n, coalesce(sum(estimated_value),0)::float loss,
+                count(distinct hotel_id)::int hotels
+           from missed_demand where resolved_by_hotel = false
+          group by lower(requested_item) order by n desc limit 10`);
+      gaps = g.map((x) => ({ item: x.item, times: x.n, loss: Number(x.loss ?? 0), hotels: x.hotels }));
+    } catch {}
+
+    // departments across the platform
+    const depts = Array.from(new Set(reqs.map((r) => r.dept).filter(Boolean)));
+    const byDepartment = depts.map((d) => {
+      const dr = reqs.filter((r) => r.dept === d);
+      return { dept: d, requests: dr.length, revenue: dr.reduce((s, r) => s + r.revenue, 0), declined: dr.filter((r) => r.declined).length };
+    }).sort((a, b) => b.requests - a.requests);
+
+    const activity = reqs.slice(0, 25).map((r) => ({
+      hotelId: String(r.hotelId), hotelName: nameOf(r.hotelId),
+      room: r.roomNumber ?? null, detail: r.requestDetail ?? null, dept: r.dept ?? null,
+      status: r.declined ? "declined" : r.status, at: new Date(r.createdAt).toISOString(),
+    }));
+
+    // what needs a look
+    const attention: Insights["attention"] = [];
+    const staffOn = await prisma.$queryRawUnsafe<any[]>(
+      `select hotel_id, count(*) filter (where last_seen > now() - interval '120 seconds')::int on_duty
+         from staff_users where is_active is not false and role <> 'founder' group by hotel_id`);
+    for (const h of hotels) {
+      const id = String(h.hotelId);
+      const open = reqs.filter((r) => String(r.hotelId) === id && r.status === "received").length;
+      const on = staffOn.find((s) => String(s.hotel_id) === id)?.on_duty ?? 0;
+      if (open > 0 && on === 0) attention.push({ hotelId: id, name: h.name, issue: open + " request" + (open === 1 ? "" : "s") + " waiting with no one on duty", severity: "high" });
+      else if (open > 3) attention.push({ hotelId: id, name: h.name, issue: open + " requests waiting", severity: "medium" });
+      if (!h.isActive) attention.push({ hotelId: id, name: h.name, issue: "Hotel is switched off", severity: "medium" });
+    }
+
+    return { ok: true, data: {
+      series, growth,
+      speed: { avgResponseMins: avg(allResp), avgResolveMins: avg(allRes), byHotel: speedByHotel },
+      demand, gaps, byDepartment, activity, attention,
+    } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "insights failed" }; }
+}
