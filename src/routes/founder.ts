@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { verifyToken } from "../auth/service";
 import { getPortfolio, getHotelDetail, getAllPeople, getInsights } from "../founder/service";
+import { getPlans, setHotelPlan, setRevenueShare, setHotelActive, getBilling, getOnboarding, setOnboardingStep, setBlocker } from "../founder/platform";
+import { listTickets, createTicket, replyToTicket, updateTicket, listIncidents, createIncident, resolveIncident, listStations, upsertStation } from "../founder/ops";
 
 export const founderRouter = Router();
 
@@ -40,5 +42,98 @@ founderRouter.get("/api/founder/insights", async (req, res) => {
   if (!gate.ok) return res.status(gate.error === "Not signed in." ? 401 : 403).json({ ok: false, error: gate.error });
   const days = Number(req.query.days ?? 30);
   const r = await getInsights(isNaN(days) ? 30 : Math.min(180, Math.max(7, days)));
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+// ---- plans, billing, hotel settings ----
+founderRouter.get("/api/founder/plans", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await getPlans(); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.get("/api/founder/billing", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await getBilling(); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/hotel/plan", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await setHotelPlan(String(req.body?.hotelId ?? ""), String(req.body?.planCode ?? ""));
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/hotel/share", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await setRevenueShare(String(req.body?.hotelId ?? ""), Number(req.body?.percent ?? 0));
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/hotel/active", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await setHotelActive(String(req.body?.hotelId ?? ""), !!req.body?.active);
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+// ---- onboarding ----
+founderRouter.get("/api/founder/onboarding", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await getOnboarding(); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/onboarding/step", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await setOnboardingStep(String(req.body?.hotelId ?? ""), String(req.body?.step ?? ""), !!req.body?.value);
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/onboarding/blocker", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const b = req.body?.blocker; 
+  const r = await setBlocker(String(req.body?.hotelId ?? ""), b ? String(b) : null);
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+// ---- support ----
+founderRouter.get("/api/founder/tickets", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await listTickets(); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/tickets/reply", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await replyToTicket(String(req.body?.ticketId ?? ""), String(req.body?.author ?? "Aria"), "aria", String(req.body?.body ?? ""));
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/tickets/update", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await updateTicket(String(req.body?.ticketId ?? ""), {
+    state: req.body?.state, assignedTo: req.body?.assignedTo, priority: req.body?.priority });
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+// ---- incidents & stations ----
+founderRouter.get("/api/founder/incidents", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await listIncidents(); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/incidents", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await createIncident({ hotelId: req.body?.hotelId, kind: req.body?.kind, title: String(req.body?.title ?? ""), detail: req.body?.detail, severity: req.body?.severity });
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/incidents/resolve", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await resolveIncident(String(req.body?.id ?? "")); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.get("/api/founder/stations", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await listStations(); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/stations", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await upsertStation({ hotelId: String(req.body?.hotelId ?? ""), name: String(req.body?.name ?? ""), dept: req.body?.dept });
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+// a GM raises a ticket from their own dashboard
+founderRouter.post("/api/support/ticket", async (req, res) => {
+  const auth = req.header("authorization") ?? "";
+  const tk = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const user = tk ? verifyToken(tk) : null;
+  if (!user) return res.status(401).json({ ok: false, error: "Not signed in." });
+  const r = await createTicket({ hotelId: user.hotelId, raisedBy: user.fullName, subject: String(req.body?.subject ?? ""), body: req.body?.body, priority: req.body?.priority });
   return res.status(r.ok ? 200 : 400).json(r);
 });
