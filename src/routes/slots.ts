@@ -1,5 +1,5 @@
-﻿import { Router } from "express";
-import { listSlots, createSlot, updateSlot, deleteSlot } from "../slots/service";
+import { Router } from "express";
+import { listSlotsLegacy as listSlots, createSlot, updateSlotLegacy as updateSlot, deleteSlotLegacy as deleteSlot } from "../slots/service";
 
 export const slotsRouter = Router();
 const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
