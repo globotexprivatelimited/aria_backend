@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { recordMissedDemand } from "../misseddemand/service";
 import { log } from "../lib/logger";
 import { sendReply, notifyGM } from "../lib/notify";
 
@@ -37,7 +38,19 @@ export async function declineRequest(hotelId: string, ref: string, staffName: st
 
   await prisma.request.update({
     where: { id: req.id },
-    data: { status: "resolved", claimedBy: staffName, resolvedAt: new Date() },
+    data: { status: "resolved", claimedBy: staffName, resolvedAt: new Date(), declined: true, declineReason: reason ?? null },
+  });
+
+  // a decline is lost revenue - capture it so the hotel can see what it is missing
+  await recordMissedDemand({
+    hotelId,
+    requestId: req.id,
+    roomNumber: req.roomNumber ?? null,
+    guestPhone: req.guestPhone ?? null,
+    department: String(req.department ?? "front_desk"),
+    requestedItem: req.requestDetail ?? "unspecified request",
+    source: "staff_declined",
+    declineReason: reason ?? null,
   });
 
   const because = reason ? " (" + reason + ")" : "";

@@ -24,6 +24,7 @@ import { staffActionsRouter } from "./routes/staffactions";
 import { presenceRouter } from "./routes/presence";
 import { deptConfigRouter } from "./routes/deptconfig";
 import { deptDetailRouter } from "./routes/deptdetail";
+import { missedDemandRouter } from "./routes/misseddemand";
 import { passwordResetRouter } from "./routes/passwordreset";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
@@ -88,6 +89,7 @@ app.use(staffActionsRouter);
 app.use(presenceRouter);
 app.use(deptConfigRouter);
 app.use(deptDetailRouter);
+app.use(missedDemandRouter);
 app.use(passwordResetRouter);
 
 app.use(

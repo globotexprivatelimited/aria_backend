@@ -179,6 +179,8 @@ model Request {
   deliveryLocation   String?
   notified           Boolean          @default(false)
   isTest             Boolean          @default(false)
+  declined           Boolean          @default(false)
+  declineReason      String?
   claimedAt          DateTime?
   resolvedAt         DateTime?
   createdAt          DateTime         @default(now())
