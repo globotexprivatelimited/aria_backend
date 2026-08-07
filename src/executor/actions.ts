@@ -22,12 +22,13 @@ export async function acceptRequest(hotelId: string, ref: string, staffName: str
   const req = await findRequest(hotelId, ref);
   if (!req) return { ok: false, message: "No open request found with reference " + ref + "." };
 
+  // accepting settles it in one step - the guest is told yes and the job is closed
   await prisma.request.update({
     where: { id: req.id },
-    data: { status: "in_progress", claimedBy: staffName, claimedAt: new Date() },
+    data: { status: "resolved", claimedBy: staffName, claimedAt: new Date(), resolvedAt: new Date() },
   });
 
-  await sendReply(req.guestPhone, "Good news - " + (req.requestDetail ?? "your request") + " is confirmed. We are arranging it now.", hotelId);
+  await sendReply(req.guestPhone, "Good news - " + (req.requestDetail ?? "your request") + " is confirmed.", hotelId);
   log.info("action: accepted", { requestId: req.id, staffName });
   return { ok: true, message: "Accepted " + ref + " and told the guest." };
 }
