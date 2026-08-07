@@ -23,7 +23,7 @@ export async function acceptRequest(hotelId: string, ref: string, staffName: str
 
   await prisma.request.update({
     where: { id: req.id },
-    data: { status: "in_progress", claimedBy: staffName },
+    data: { status: "in_progress", claimedBy: staffName, claimedAt: new Date() },
   });
 
   await sendReply(req.guestPhone, "Good news - " + (req.requestDetail ?? "your request") + " is confirmed. We are arranging it now.", hotelId);
@@ -52,7 +52,7 @@ export async function proposeAlternative(hotelId: string, ref: string, staffName
 
   await prisma.request.update({
     where: { id: req.id },
-    data: { status: "in_progress", claimedBy: staffName },
+    data: { status: "in_progress", claimedBy: staffName, claimedAt: new Date() },
   });
 
   await sendReply(req.guestPhone, "We cannot do exactly that, but we can offer: " + alternative + ". Would that work for you?", hotelId);
@@ -68,7 +68,7 @@ export async function claimRequest(hotelId: string, ref: string, staffName: stri
 
   await prisma.request.update({
     where: { id: req.id },
-    data: { status: "in_progress", claimedBy: staffName },
+    data: { status: "in_progress", claimedBy: staffName, claimedAt: new Date() },
   });
 
   log.info("action: claimed", { requestId: req.id, staffName });
@@ -95,7 +95,7 @@ export async function problemRequest(hotelId: string, ref: string, staffName: st
 
   await prisma.request.update({
     where: { id: req.id },
-    data: { status: "in_progress", claimedBy: staffName },
+    data: { status: "in_progress", claimedBy: staffName, claimedAt: new Date() },
   });
 
   const because = reason ? ": " + reason : "";
