@@ -1,4 +1,4 @@
-﻿import { prisma } from "../db";
+import { prisma } from "../db";
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /**
@@ -67,7 +67,7 @@ export async function getMissedDemand(hotelId: string, days = 30): Promise<Resul
       const key = (r.department ?? "") + "::" + String(r.requested_item ?? "").toLowerCase().trim().slice(0, 60);
       const g = map.get(key) ?? {
         item: r.requested_item, department: r.department, timesAsked: 0,
-        estimatedLoss: null, estimateBasis: r.estimate_basis ?? null, instances: [],
+        estimatedLoss: null, estimateBasis: r.estimate_basis ?? null, instances: [] as MissedGroup["instances"],
       };
       g.timesAsked += 1;
       const v = r.estimated_value == null ? null : Number(r.estimated_value);

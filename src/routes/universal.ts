@@ -12,7 +12,7 @@ export const universalRouter = Router();
  */
 async function resolveHotel(req: Request, res: Response, next: NextFunction) {
   const token = req.params.hotelToken;
-  const hotel = await prisma.hotel.findFirst({ where: { webhookToken: token, isActive: true } });
+  const hotel = await prisma.hotel.findFirst({ where: { webhookToken: String(token ?? ""), isActive: true } });
   if (!hotel) {
     res.status(401).json({ ok: false, error: "unknown_hotel_token" });
     return;

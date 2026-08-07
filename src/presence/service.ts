@@ -28,9 +28,9 @@ export async function getDepartmentPresence(hotelId: string): Promise<Result<Dep
 
     // start with every department so the GM sees the ones with no staff at all
     const byDept = new Map<string, DeptPresence>();
-    for (const k of ALL_DEPT_KEYS) byDept.set(k, { dept: k, online: false, assignedCount: 0, staff: [] });
+    for (const k of ALL_DEPT_KEYS) byDept.set(k, { dept: k, online: false, assignedCount: 0, staff: [] } as DeptPresence);
     for (const r of rows) {
-      const d = byDept.get(r.dept) ?? { dept: r.dept, online: false, assignedCount: 0, staff: [] };
+      const d: DeptPresence = byDept.get(r.dept) ?? { dept: r.dept, online: false, assignedCount: 0, staff: [] };
       d.assignedCount += 1;
       if (r.is_online) {
         d.online = true;

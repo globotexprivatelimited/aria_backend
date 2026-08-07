@@ -22,7 +22,7 @@ onboardingRouter.post("/api/hotels", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
   const { gmAuthUserId, hotelId, name, address, city, roomCount, checkInTime, checkOutTime, contactPhone } = req.body ?? {};
   if (!gmAuthUserId || !hotelId || !name) return res.status(400).json({ error: "gmAuthUserId, hotelId, name required" });
-  const r = await createHotel(gmAuthUserId, { hotelId, name, address, city, roomCount, checkInTime, checkOutTime, contactPhone });
+  const r = await createHotel(gmAuthUserId, { name, address, city, roomCount, checkInTime, checkOutTime, contactPhone });
   return res.status(r.ok ? 200 : 400).json(r);
 });
 

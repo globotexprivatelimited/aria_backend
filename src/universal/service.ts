@@ -13,8 +13,7 @@ export async function universalCheckin(hotelId: string, rawBody: Record<string, 
   }
 
   const d = parsed.data;
-  const checkoutDate = d.checkoutAt ? new Date(d.checkoutAt) : undefined;
-  const session = await checkInGuest(d.hotelId, d.room, d.guestName, d.phone, checkoutDate);
+  const session = await checkInGuest(d.hotelId, d.room, d.guestName, d.phone);
 
   log.info("universal: checkin", { source: d.source, room: d.room, phone: d.phone });
   return { ok: true, sessionId: session.id, room: session.roomNumber, verified: session.roomVerified };
@@ -37,7 +36,7 @@ export async function universalCheckout(hotelId: string, rawBody: Record<string,
   }
   if (!room) return { ok: false, error: "not_found", detail: "no active guest for that room or phone" };
 
-  const closed = await checkOutGuest(hotelId, room);
+  const closed = await checkOutGuest(hotelId, { room });
   log.info("universal: checkout", { source: d.source, room });
   return { ok: Boolean(closed), closed: Boolean(closed), room };
 }
