@@ -21,6 +21,7 @@ import { roomsRouter } from "./routes/rooms";
 import { deptItemsRouter } from "./routes/deptitems";
 import { staffAccessRouter } from "./routes/staffaccess";
 import { staffActionsRouter } from "./routes/staffactions";
+import { presenceRouter } from "./routes/presence";
 import { passwordResetRouter } from "./routes/passwordreset";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
@@ -82,6 +83,7 @@ app.use(roomsRouter);
 app.use(deptItemsRouter);
 app.use(staffAccessRouter);
 app.use(staffActionsRouter);
+app.use(presenceRouter);
 app.use(passwordResetRouter);
 
 app.use(
