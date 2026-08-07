@@ -2,7 +2,7 @@ import { Router } from "express";
 import { verifyToken } from "../auth/service";
 import { getPortfolio, getHotelDetail, getAllPeople, getInsights } from "../founder/service";
 import { getPlans, setHotelPlan, setRevenueShare, setHotelActive, getBilling, getOnboarding, setOnboardingStep, setBlocker } from "../founder/platform";
-import { listTickets, createTicket, replyToTicket, updateTicket, listIncidents, createIncident, resolveIncident, listStations, upsertStation } from "../founder/ops";
+import { listTickets, createTicket, replyToTicket, updateTicket, listIncidents, createIncident, resolveIncident, listStations, upsertStation, listHotelTickets, hotelReply } from "../founder/ops";
 
 export const founderRouter = Router();
 
@@ -135,5 +135,26 @@ founderRouter.post("/api/support/ticket", async (req, res) => {
   const user = tk ? verifyToken(tk) : null;
   if (!user) return res.status(401).json({ ok: false, error: "Not signed in." });
   const r = await createTicket({ hotelId: user.hotelId, raisedBy: user.fullName, subject: String(req.body?.subject ?? ""), body: req.body?.body, priority: req.body?.priority });
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+// ---- the hotel side of support ----
+function sessionUser(req: import("express").Request) {
+  const auth = req.header("authorization") ?? "";
+  const tk = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return tk ? verifyToken(tk) : null;
+}
+
+founderRouter.get("/api/support/my-tickets", async (req, res) => {
+  const user = sessionUser(req);
+  if (!user) return res.status(401).json({ ok: false, error: "Not signed in." });
+  const r = await listHotelTickets(user.hotelId);
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+founderRouter.post("/api/support/reply", async (req, res) => {
+  const user = sessionUser(req);
+  if (!user) return res.status(401).json({ ok: false, error: "Not signed in." });
+  const r = await hotelReply(user.hotelId, String(req.body?.ticketId ?? ""), user.fullName ?? "Hotel", String(req.body?.body ?? ""));
   return res.status(r.ok ? 200 : 400).json(r);
 });

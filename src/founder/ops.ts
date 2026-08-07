@@ -1,4 +1,4 @@
-﻿import { prisma } from "../db";
+import { prisma } from "../db";
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 // ---------- support tickets ----------
@@ -152,6 +152,50 @@ export async function upsertStation(a: { hotelId: string; name: string; dept?: s
   try {
     await prisma.$executeRawUnsafe(
       `insert into stations (hotel_id, name, dept, last_seen) values ($1,$2,$3, now())`, a.hotelId, a.name, a.dept ?? null);
+    return { ok: true, data: { ok: true } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}
+
+/** A hotel sees only its own tickets. */
+export async function listHotelTickets(hotelId: string): Promise<Result<{ tickets: Ticket[] }>> {
+  if (!hotelId) return { ok: false, error: "hotelId required" };
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `select t.*, h.name hotel_name from support_tickets t
+         left join "Hotel" h on h."hotelId" = t.hotel_id
+        where t.hotel_id = $1
+        order by case t.state when 'resolved' then 1 else 0 end, t.created_at desc limit 50`, hotelId);
+    const ids = rows.map((r) => r.id);
+    let replies: any[] = [];
+    if (ids.length) {
+      replies = await prisma.$queryRawUnsafe<any[]>(
+        `select ticket_id, author, author_side, body, created_at from ticket_replies
+          where ticket_id = any($1::uuid[]) order by created_at`, ids);
+    }
+    const tickets: Ticket[] = rows.map((r) => ({
+      id: r.id, ref: r.ref ?? "", hotelId: String(r.hotel_id), hotelName: r.hotel_name ?? "",
+      raisedBy: r.raised_by ?? null, subject: r.subject, body: r.body ?? null,
+      priority: r.priority, state: r.state, assignedTo: r.assigned_to ?? null,
+      createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString(),
+      resolvedAt: r.resolved_at ? new Date(r.resolved_at).toISOString() : null,
+      replies: replies.filter((x) => x.ticket_id === r.id).map((x) => ({
+        author: x.author, side: x.author_side, body: x.body, at: new Date(x.created_at).toISOString(),
+      })),
+    }));
+    return { ok: true, data: { tickets } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}
+
+/** The hotel replying on its own ticket - never on someone else's. */
+export async function hotelReply(hotelId: string, ticketId: string, author: string, body: string): Promise<Result<{ ok: true }>> {
+  if (!ticketId || !body) return { ok: false, error: "ticketId and body required" };
+  try {
+    const own = await prisma.$queryRawUnsafe<any[]>(`select id from support_tickets where id=$1::uuid and hotel_id=$2`, ticketId, hotelId);
+    if (!own[0]) return { ok: false, error: "Not your ticket." };
+    await prisma.$executeRawUnsafe(
+      `insert into ticket_replies (ticket_id, author, author_side, body) values ($1::uuid,$2,'hotel',$3)`, ticketId, author, body);
+    await prisma.$executeRawUnsafe(
+      `update support_tickets set updated_at = now(), state = case when state='waiting_hotel' then 'open' else state end where id=$1::uuid`, ticketId);
     return { ok: true, data: { ok: true } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
 }
