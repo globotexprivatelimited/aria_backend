@@ -24,8 +24,8 @@ roomsRouter.post("/api/rooms/upsert", async (req, res) => {
 });
 roomsRouter.post("/api/rooms/checkin", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
-  const { hotelId, roomNumber, guestName, guestPhone, partySize, checkOut } = req.body ?? {};
-  const r = await checkInRoom(hotelId, roomNumber, { guestName, guestPhone, partySize, checkOut }); return res.status(r.ok ? 200 : 400).json(r);
+  const { hotelId, roomNumber, guestName, guestPhone, partySize, checkOut, checkIn, notes } = req.body ?? {};
+  const r = await checkInRoom(hotelId, roomNumber, { guestName, guestPhone, partySize, checkOut, checkIn, notes }); return res.status(r.ok ? 200 : 400).json(r);
 });
 roomsRouter.post("/api/rooms/checkout", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });

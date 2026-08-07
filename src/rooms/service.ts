@@ -45,13 +45,15 @@ export async function upsertRoom(hotelId: string, room: { room_number: string; r
 }
 
 // check a guest into a room (sets occupied + times)
-export async function checkInRoom(hotelId: string, roomNumber: string, opts: { guestName?: string; guestPhone?: string; partySize?: number; checkOut?: string }): Promise<Result<any>> {
+export async function checkInRoom(hotelId: string, roomNumber: string, opts: { guestName?: string; guestPhone?: string; partySize?: number; checkOut?: string; checkIn?: string; notes?: string }): Promise<Result<any>> {
   if (!hotelId || !roomNumber) return { ok: false, error: "roomNumber required" };
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(
-      `update rooms set status='occupied', guest_name=$3, guest_phone=$4, party_size=$5, check_in=now(), check_out=$6::timestamptz
+      `update rooms set status='occupied', guest_name=$3, guest_phone=$4, party_size=$5,
+              check_in=coalesce($7::timestamptz, now()), check_out=$6::timestamptz, notes=coalesce($8, notes)
        where hotel_id=$1 and room_number=$2 returning *`,
-      hotelId, roomNumber, opts.guestName ?? null, opts.guestPhone ?? null, opts.partySize ?? null, opts.checkOut ?? null);
+      hotelId, roomNumber, opts.guestName ?? null, (opts.guestPhone ?? "").replace(/[^0-9+]/g, "") || null, opts.partySize ?? null, opts.checkOut ?? null,
+      opts.checkIn ?? null, opts.notes ?? null);
     if (!rows[0]) return { ok: false, error: "Room not found." };
 
     // Link to the WhatsApp brain: upsert a PRE-VERIFIED Session so when the guest texts Aria,
