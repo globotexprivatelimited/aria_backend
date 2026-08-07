@@ -115,6 +115,7 @@ export type HotelDetail = {
     whatsappNumber: string | null; contactEmail: string | null; contactPhone: string | null;
     checkInTime: string | null; checkOutTime: string | null; roomTarget: number | null;
     onboarded: boolean; isActive: boolean; emailVerified: boolean; revenueSharePercent: number;
+    planCode: string; pilotEndsAt: string | null; accountOwner: string | null;
     createdAt: string;
   };
   rooms: { roomNumber: string; type: string | null; floor: number | null; status: string;
@@ -137,7 +138,8 @@ export async function getHotelDetail(hotelId: string): Promise<Result<HotelDetai
     const hRows = await prisma.$queryRawUnsafe<any[]>(
       `select "hotelId", name, city, address, "whatsappNumber", contact_email, contact_phone,
               check_in_time, check_out_time, room_count, onboarded, "isActive",
-              coalesce(email_verified,false) email_verified, "revenueSharePercent", "createdAt"
+              coalesce(email_verified,false) email_verified, "revenueSharePercent", "createdAt",
+              coalesce(plan_code,'pilot') plan_code, pilot_ends_at, account_owner
          from "Hotel" where "hotelId" = $1 limit 1`, hotelId);
     if (!hRows[0]) return { ok: false, error: "Hotel not found." };
     const h = hRows[0];
@@ -186,6 +188,9 @@ export async function getHotelDetail(hotelId: string): Promise<Result<HotelDetai
         roomTarget: h.room_count == null ? null : Number(h.room_count),
         onboarded: !!h.onboarded, isActive: !!h.isActive, emailVerified: !!h.email_verified,
         revenueSharePercent: Number(h.revenueSharePercent ?? 0), createdAt: new Date(h.createdAt).toISOString(),
+        planCode: h.plan_code ?? "pilot",
+        pilotEndsAt: h.pilot_ends_at ? new Date(h.pilot_ends_at).toISOString() : null,
+        accountOwner: h.account_owner ?? null,
       },
       rooms: rooms.map((r) => ({
         roomNumber: r.room_number, type: r.room_type ?? null, floor: r.floor ?? null, status: r.status,

@@ -199,3 +199,35 @@ export async function hotelReply(hotelId: string, ticketId: string, author: stri
     return { ok: true, data: { ok: true } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
 }
+
+/** A station checks in. Called by whatever device or portal represents it. */
+export async function stationHeartbeat(hotelId: string, dept: string): Promise<Result<{ ok: true }>> {
+  if (!hotelId || !dept) return { ok: false, error: "hotelId and dept required" };
+  try {
+    const n = await prisma.$executeRawUnsafe(
+      `update stations set last_seen = now() where hotel_id = $1 and dept = $2 and is_active`, hotelId, dept);
+    if (Number(n) === 0) {
+      await prisma.$executeRawUnsafe(
+        `insert into stations (hotel_id, name, dept, last_seen) values ($1, $2, $3, now())`,
+        hotelId, dept.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()), dept);
+    }
+    return { ok: true, data: { ok: true } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}
+
+export async function deleteStation(id: string): Promise<Result<{ ok: true }>> {
+  try {
+    await prisma.$executeRawUnsafe(`update stations set is_active = false where id = $1::uuid`, id);
+    return { ok: true, data: { ok: true } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}
+
+/** Record what the platform actually costs. */
+export async function addCost(a: { category: string; amount: number; note?: string }): Promise<Result<{ ok: true }>> {
+  if (!a.category || !(a.amount > 0)) return { ok: false, error: "category and a positive amount required" };
+  try {
+    await prisma.$executeRawUnsafe(
+      `insert into platform_costs (category, amount, note) values ($1,$2,$3)`, a.category, a.amount, a.note ?? null);
+    return { ok: true, data: { ok: true } };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}

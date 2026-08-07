@@ -2,7 +2,7 @@ import { Router } from "express";
 import { verifyToken } from "../auth/service";
 import { getPortfolio, getHotelDetail, getAllPeople, getInsights } from "../founder/service";
 import { getPlans, setHotelPlan, setRevenueShare, setHotelActive, getBilling, getOnboarding, setOnboardingStep, setBlocker } from "../founder/platform";
-import { listTickets, createTicket, replyToTicket, updateTicket, listIncidents, createIncident, resolveIncident, listStations, upsertStation, listHotelTickets, hotelReply } from "../founder/ops";
+import { listTickets, createTicket, replyToTicket, updateTicket, listIncidents, createIncident, resolveIncident, listStations, upsertStation, listHotelTickets, hotelReply, stationHeartbeat, deleteStation, addCost } from "../founder/ops";
 
 export const founderRouter = Router();
 
@@ -156,5 +156,25 @@ founderRouter.post("/api/support/reply", async (req, res) => {
   const user = sessionUser(req);
   if (!user) return res.status(401).json({ ok: false, error: "Not signed in." });
   const r = await hotelReply(user.hotelId, String(req.body?.ticketId ?? ""), user.fullName ?? "Hotel", String(req.body?.body ?? ""));
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+founderRouter.post("/api/founder/stations/remove", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await deleteStation(String(req.body?.id ?? "")); return res.status(r.ok ? 200 : 400).json(r);
+});
+founderRouter.post("/api/founder/costs", async (req, res) => {
+  const g = requireFounder(req); if (!g.ok) return res.status(403).json({ ok: false, error: g.error });
+  const r = await addCost({ category: String(req.body?.category ?? ""), amount: Number(req.body?.amount ?? 0), note: req.body?.note });
+  return res.status(r.ok ? 200 : 400).json(r);
+});
+
+/** Any signed-in staff member working a department keeps that station alive. */
+founderRouter.post("/api/stations/heartbeat", async (req, res) => {
+  const user = sessionUser(req);
+  if (!user) return res.status(401).json({ ok: false, error: "Not signed in." });
+  const dept = String(req.body?.dept ?? "");
+  if (!dept) return res.status(400).json({ ok: false, error: "dept required" });
+  const r = await stationHeartbeat(user.hotelId, dept);
   return res.status(r.ok ? 200 : 400).json(r);
 });
