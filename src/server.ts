@@ -26,6 +26,7 @@ import { deptConfigRouter } from "./routes/deptconfig";
 import { deptDetailRouter } from "./routes/deptdetail";
 import { missedDemandRouter } from "./routes/misseddemand";
 import { emailVerifyRouter } from "./routes/emailverify";
+import { founderRouter } from "./routes/founder";
 import { passwordResetRouter } from "./routes/passwordreset";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
@@ -92,6 +93,7 @@ app.use(deptConfigRouter);
 app.use(deptDetailRouter);
 app.use(missedDemandRouter);
 app.use(emailVerifyRouter);
+app.use(founderRouter);
 app.use(passwordResetRouter);
 
 app.use(
