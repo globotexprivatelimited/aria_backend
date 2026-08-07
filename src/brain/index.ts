@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { BrainOutput } from "./schema";
-import { buildSystemPrompt } from "./prompt";
+import { buildSystemPrompt, type DeptModeMap } from "./prompt";
 import { log } from "../lib/logger";
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
@@ -33,7 +33,7 @@ const SAFE_FALLBACK: BrainOutput = {
   needsHuman: true,
 };
 
-type BrainHotel = { name: string; timezone?: string | null };
+type BrainHotel = { name: string; timezone?: string | null; deptModes?: DeptModeMap };
 type BrainSession = { roomNumber?: string | null; claimedGuestName?: string | null; roomVerified?: boolean };
 
 export async function understand(
@@ -47,7 +47,7 @@ export async function understand(
     return { output: SAFE_FALLBACK, usedFallback: true };
   }
 
-  const system = buildSystemPrompt(hotel, session);
+  const system = buildSystemPrompt(hotel, session, hotel.deptModes);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {

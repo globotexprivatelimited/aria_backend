@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { notifyDepartment, notifyGM, notifyFrontDesk } from "../lib/notify";
+import { loadDeptModes } from "../deptconfig/service";
 import { departmentFor, isBooking, needsHumanJudgement, type Dept } from "./routing";
 import { deptType, acknowledgementFor } from "./departmentModel";
 import type { BrainOutput } from "../brain/schema";
@@ -43,6 +44,8 @@ export async function executeRequests(
   messageId: string
 ): Promise<ExecutionResult> {
   const result: ExecutionResult = { created: 0, bookings: 0, escalated: false, blocked: [] };
+  // warm the per-hotel department mode cache so GM overrides apply to this request
+  await loadDeptModes(hotel.hotelId);
 
   for (const r of brain.requests) {
     const dept = departmentFor(r.intent);
@@ -98,7 +101,7 @@ export async function executeRequests(
     if (booking) result.bookings += 1;
 
     const room = session.roomNumber ?? "unknown";
-    const dtype = deptType(dept);
+    const dtype = deptType(dept, hotel.hotelId);
     const actionHint = dtype === "auto" || dtype === "maintenance" ? "Actions: CLAIM / DONE / PROBLEM" : "Actions: ACCEPT / DECLINE <reason> / ALTERNATIVE <option>";
     const urgency = r.priority === "urgent" ? "[URGENT] " : "";
     const line =

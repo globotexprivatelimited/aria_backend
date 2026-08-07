@@ -1,4 +1,5 @@
 import type { Dept } from "./routing";
+import { cachedDeptMode } from "../deptconfig/service";
 
 /**
  * Two ways a department behaves (from the product logic doc):
@@ -20,7 +21,12 @@ const DEPT_TYPE: Record<Dept, DeptType> = {
   gm: "accept_decline",
 };
 
-export function deptType(dept: Dept): DeptType {
+export function deptType(dept: Dept, hotelId?: string): DeptType {
+  // a GM can override a department mode per hotel; otherwise use the product default
+  if (hotelId) {
+    const configured = cachedDeptMode(hotelId, dept);
+    if (configured) return configured;
+  }
   return DEPT_TYPE[dept] ?? "accept_decline";
 }
 

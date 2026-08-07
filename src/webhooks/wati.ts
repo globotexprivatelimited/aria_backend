@@ -6,6 +6,7 @@ import { runSafetyChecks } from "../safety";
 import { runSession } from "../session";
 import { ensureConsentOnFirstContact, isWithdrawalKeyword, CONSENT_NOTICE } from "../privacy/consent";
 import { eraseGuestData } from "../privacy/erasure";
+import { loadDeptModes } from "../deptconfig/service";
 import { sendReply } from "../lib/notify";
 import { log } from "../lib/logger";
 import { understand } from "../brain";
@@ -100,7 +101,8 @@ watiRouter.post("/webhooks/wati/:hotelToken", async (req, res) => {
         return;
       }
 
-      const { output, usedFallback } = await understand(body, hotel, session);
+      const deptModes = Object.fromEntries(await loadDeptModes(hotel.hotelId));
+      const { output, usedFallback } = await understand(body, { ...hotel, deptModes }, session);
 
       await sendReply(guestPhone, output.reply, hotel.hotelId);
 

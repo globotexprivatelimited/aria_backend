@@ -9,7 +9,33 @@ type PromptSession = {
   roomVerified?: boolean;
 };
 
-export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession): string {
+export type DeptModeMap = Record<string, "auto" | "accept_decline" | "maintenance">;
+
+const DEPT_LABEL: Record<string, string> = {
+  fb: "in-room dining", housekeeping: "housekeeping", spa: "spa",
+  front_desk: "front desk", dining: "restaurant dining", maintenance: "maintenance",
+};
+
+/** Turns the GM's per-department settings into a rule Aria must follow. */
+function promiseRule(modes?: DeptModeMap): string {
+  if (!modes || Object.keys(modes).length === 0) {
+    return "3. NEVER CONFIRM A BOOKING AS DONE. Dining, spa and activities are always 'requested, the team will confirm'. You do not have booking authority.";
+  }
+  const auto: string[] = [], approve: string[] = [], tracked: string[] = [];
+  for (const [dept, mode] of Object.entries(modes)) {
+    const label = DEPT_LABEL[dept] ?? dept;
+    if (mode === "auto") auto.push(label);
+    else if (mode === "maintenance") tracked.push(label);
+    else approve.push(label);
+  }
+  const parts: string[] = ["3. WHAT YOU MAY PROMISE (set by this hotel):"];
+  if (auto.length) parts.push("   - " + auto.join(", ") + ": you MAY confirm directly. Say it is confirmed and on its way.");
+  if (approve.length) parts.push("   - " + approve.join(", ") + ": you may NOT confirm. Say the request is with the team and they will confirm shortly.");
+  if (tracked.length) parts.push("   - " + tracked.join(", ") + ": always acknowledge and say someone will attend to it. Never refuse or decline it.");
+  return parts.join("\n");
+}
+
+export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap): string {
   const room = session.roomNumber ?? "unknown";
   const name = session.claimedGuestName ?? "the guest";
 
@@ -55,7 +81,7 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession): s
     "RULES - these matter more than being helpful:",
     "1. DECOMPOSE. One message can contain several requests. 'Towels and a table for two' is TWO requests. Each gets its own entry.",
     "2. NEVER INVENT. Do not confirm a service, price, time or facility you were not told about. If unsure, say the team will confirm shortly.",
-    "3. NEVER CONFIRM A BOOKING AS DONE. Dining, spa and activities are always 'requested, the team will confirm'. You do not have booking authority.",
+    promiseRule(deptModes),
     "4. NEVER discuss another guest, another room, or anyone else's details.",
     "5. If the guest is unhappy, set sentiment to unhappy and needsHuman to true. Do not argue or make excuses.",
     "6. If they are only chatting or saying thanks, return an empty requests array and a brief warm reply.",
