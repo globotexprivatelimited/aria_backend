@@ -43,7 +43,28 @@ dotenv.config();
 
 const app = express();
 app.disable("x-powered-by");
-app.use(cors());
+// only our own front ends may call this API from a browser
+// a production deploy must not fall back to the development secrets
+if (process.env.NODE_ENV === "production") {
+  const weak: string[] = [];
+  if (!process.env.ADMIN_API_KEY || process.env.ADMIN_API_KEY === "dev-admin-key") weak.push("ADMIN_API_KEY");
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 24) weak.push("JWT_SECRET");
+  if (weak.length) {
+    console.error("Refusing to start: set a strong " + weak.join(" and ") + " before deploying.");
+    process.exit(1);
+  }
+}
+
+const allowedOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000,http://localhost:3001")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);              // curl, server-to-server, health checks
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error("Origin not allowed: " + origin));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: "1mb" }));
 
 app.use((req, res, next) => {
