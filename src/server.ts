@@ -28,6 +28,7 @@ import { missedDemandRouter } from "./routes/misseddemand";
 import { emailVerifyRouter } from "./routes/emailverify";
 import { founderRouter } from "./routes/founder";
 import { slotBookingRouter } from "./routes/slotbooking";
+import { aisensyProbeRouter } from "./routes/aisensyprobe";
 import { passwordResetRouter } from "./routes/passwordreset";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
@@ -117,6 +118,7 @@ app.use(missedDemandRouter);
 app.use(emailVerifyRouter);
 app.use(founderRouter);
 app.use(slotBookingRouter);
+app.use(aisensyProbeRouter);
 app.use(passwordResetRouter);
 
 app.use(
