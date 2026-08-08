@@ -1,12 +1,12 @@
 import { log } from "./logger";
-import { sendWhatsAppMessage, isWatiConfigured } from "./wati";
+import { sendWhatsAppMessage, isAiSensyConfigured } from "./aisensy";
 import { prisma } from "../db";
 
-/** Message a guest. Falls back to logging when Wati is not configured. */
+/** Message a guest. Falls back to logging when WhatsApp is not configured. */
 export async function sendReply(phone: string, text: string, hotelId: string): Promise<void> {
   log.info("outbound reply", { phone, hotelId, body: text });
 
-  if (isWatiConfigured()) {
+  if (isAiSensyConfigured()) {
     await sendWhatsAppMessage(phone, text);
   }
 
@@ -38,7 +38,7 @@ async function messageDepartment(hotelId: string, dept: string, text: string): P
     return;
   }
 
-  if (isWatiConfigured()) {
+  if (isAiSensyConfigured()) {
     await sendWhatsAppMessage(contact.whatsappNumber, text);
   }
 }

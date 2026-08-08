@@ -13,7 +13,7 @@ export async function universalCheckin(hotelId: string, rawBody: Record<string, 
   }
 
   const d = parsed.data;
-  const session = await checkInGuest(d.hotelId, d.room, d.guestName, d.phone);
+  const session = await checkInGuest(d.hotelId, d.room, d.guestName, d.phone, d.checkoutAt ?? null);
 
   log.info("universal: checkin", { source: d.source, room: d.room, phone: d.phone });
   return { ok: true, sessionId: session.id, room: session.roomNumber, verified: session.roomVerified };

@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 import { scheduleStayTriggers, cancelTriggersForSession } from "../proactive";
 
-export async function checkInGuest(hotelId: string, room: string, name: string, phone: string) {
+export async function checkInGuest(hotelId: string, room: string, name: string, phone: string, checkOut?: Date | string | null) {
   const guestPhone = phone.trim();
   const data = {
     state: "active" as const,
@@ -10,6 +10,7 @@ export async function checkInGuest(hotelId: string, room: string, name: string, 
     roomVerified: true,
     verificationMethod: "front_desk_match" as const,
     checkInDate: new Date(),
+    checkOutDate: checkOut ? new Date(checkOut) : undefined,
     lastMessageAt: new Date(),
   };
   const existing = await prisma.session.findFirst({
