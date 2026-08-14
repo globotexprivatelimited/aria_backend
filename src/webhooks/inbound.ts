@@ -1,4 +1,4 @@
-﻿import { prisma } from "../db";
+import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { runSafetyChecks } from "../safety";
 import { runSession } from "../session";
@@ -23,7 +23,10 @@ export type InboundMessage = {
  * whatever provider delivered it. WATI and AiSensy both land here.
  */
 export async function handleInboundMessage(hotel: any, msg: InboundMessage): Promise<void> {
-  const { messageId, guestPhone } = msg;
+  const { messageId } = msg;
+  // providers differ on the leading plus - store one shape everywhere
+  const raw = (msg.guestPhone || "").trim();
+  const guestPhone = raw.startsWith("+") ? raw : "+" + raw.replace(/[^0-9]/g, "");
   const type = (msg.type || "text").toLowerCase();
   const body = (msg.body || "").trim();
 

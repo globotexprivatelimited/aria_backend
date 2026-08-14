@@ -6,6 +6,7 @@ import swaggerUi from "swagger-ui-express";
 import { openapiSpec } from "./lib/openapi";
 import { watiRouter } from "./webhooks/wati";
 import { aisensyRouter } from "./webhooks/aisensy";
+import { metaRouter } from "./webhooks/meta";
 import { adminRouter } from "./webhooks/admin";
 import { frontdeskRouter } from "./routes/frontdesk";
 import { dashboardRouter } from "./routes/dashboard";
@@ -97,6 +98,7 @@ app.get("/ready", async (_req, res) => {
 
 app.use(watiRouter);
 app.use(aisensyRouter);
+app.use(metaRouter);
 app.use(adminRouter);
 app.use(frontdeskRouter);
 app.use(dashboardRouter);

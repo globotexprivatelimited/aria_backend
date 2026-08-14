@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { handleInboundMessage, hotelForToken } from "./inbound";
 import { log } from "../lib/logger";
 
@@ -17,6 +17,14 @@ function pick(obj: any, paths: string[]): string {
   }
   return "";
 }
+
+/** AiSensy may verify the URL with a GET before saving it. */
+aisensyRouter.get("/webhooks/aisensy/:hotelToken", async (req, res) => {
+  const hotel = await hotelForToken(req.params.hotelToken);
+  const challenge = req.query["hub.challenge"] ?? req.query.challenge;
+  if (challenge) return res.status(200).send(String(challenge));
+  return res.status(200).json({ ok: true, ready: !!hotel, endpoint: "aisensy webhook, POST only" });
+});
 
 aisensyRouter.post("/webhooks/aisensy/:hotelToken", async (req, res) => {
   res.status(200).json({ ok: true });
