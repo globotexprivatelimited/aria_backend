@@ -94,6 +94,9 @@ enum ProactiveStatus {
 }
 
 model Hotel {
+  whatsappPhoneId     String?  @unique @map("whatsapp_phone_id")
+  whatsappWabaId      String?  @map("whatsapp_waba_id")
+  whatsappToken       String?  @map("whatsapp_token")
   id                  String   @id @default(uuid())
   hotelId             String   @unique
   name                String
@@ -118,8 +121,8 @@ model Hotel {
   proactiveTriggers ProactiveTrigger[]
   staffContacts     StaffContact[]
   messages          Message[]
-  consents        GuestConsent[]
-  erasureRequests ErasureRequest[]
+  consents          GuestConsent[]
+  erasureRequests   ErasureRequest[]
 }
 
 model Session {
@@ -355,13 +358,13 @@ model GuestConsent {
 }
 
 model ErasureRequest {
-  id          String    @id @default(uuid())
-  hotelId     String
-  guestPhone  String
-  requestedAt DateTime  @default(now())
-  completedAt DateTime?
-  recordsWiped Int      @default(0)
-  requestedBy String?
+  id           String    @id @default(uuid())
+  hotelId      String
+  guestPhone   String
+  requestedAt  DateTime  @default(now())
+  completedAt  DateTime?
+  recordsWiped Int       @default(0)
+  requestedBy  String?
 
   hotel Hotel @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
 

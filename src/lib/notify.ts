@@ -39,7 +39,7 @@ async function messageDepartment(hotelId: string, dept: string, text: string): P
   }
 
   if (isMetaConfigured()) {
-    await sendWhatsAppMessage(contact.whatsappNumber, text);
+    await sendWhatsAppMessage(contact.whatsappNumber, text, hotelId);
   }
 }
 
