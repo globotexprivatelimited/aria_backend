@@ -1,3 +1,4 @@
+import { checkInGuest, checkOutGuest } from "../lib/frontdesk";
 import { prisma } from "../db";
 import { randomUUID } from "crypto";
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -56,25 +57,12 @@ export async function checkInRoom(hotelId: string, roomNumber: string, opts: { g
       opts.checkIn ?? null, opts.notes ?? null);
     if (!rows[0]) return { ok: false, error: "Room not found." };
 
-    // Link to the WhatsApp brain: upsert a PRE-VERIFIED Session so when the guest texts Aria,
-    // the brain already knows their room, name and checkout (no verification dance needed).
+    // Link to the WhatsApp brain through the one shared check-in path: canonical phone, verified session, welcome template, stay triggers.
     if (opts.guestPhone) {
       try {
-        const checkOutDate = opts.checkOut ? new Date(opts.checkOut).toISOString().slice(0, 10) : null;
+        const session = await checkInGuest(hotelId, roomNumber, opts.guestName ?? "Guest", opts.guestPhone, opts.checkOut ?? null);
         const customCheckoutTime = opts.checkOut ? new Date(opts.checkOut).toISOString() : null;
-        const existing = await prisma.$queryRawUnsafe<any[]>(
-          `select id from "Session" where "hotelId"=$1 and "guestPhone"=$2 limit 1`, hotelId, opts.guestPhone);
-        if (existing[0]) {
-          await prisma.$executeRawUnsafe(
-            `update "Session" set "roomNumber"=$3, "guestName"=$4, "checkOutDate"=$5::date, "customCheckoutTime"=$6, "roomVerified"=true, "state"='active', "updatedAt"=now()
-             where id=$1 and "guestPhone"=$2`,
-            existing[0].id, opts.guestPhone, roomNumber, opts.guestName ?? null, checkOutDate, customCheckoutTime);
-        } else {
-          await prisma.$executeRawUnsafe(
-            `insert into "Session" (id, "hotelId", "guestPhone", "roomNumber", "guestName", "checkOutDate", "customCheckoutTime", "roomVerified", "state", "updatedAt")
-             values ($1, $2, $3, $4, $5, $6::date, $7, true, 'active', now())`,
-            randomUUID(), hotelId, opts.guestPhone, roomNumber, opts.guestName ?? null, checkOutDate, customCheckoutTime);
-        }
+        await prisma.$executeRawUnsafe(`update "Session" set "guestName"=$2, "customCheckoutTime"=$3, "updatedAt"=now() where id=$1`, session.id, opts.guestName ?? null, customCheckoutTime);
       } catch (se) { /* session link is best-effort; room check-in still succeeds */ console.log("session link warn:", se instanceof Error ? se.message : String(se)); }
     }
 
@@ -96,7 +84,7 @@ export async function checkOutRoom(hotelId: string, roomNumber: string): Promise
     if (!rows[0]) return { ok: false, error: "Room not found." };
     // close the guest's Session so the brain knows they've left
     if (phone) {
-      try { await prisma.$executeRawUnsafe(`update "Session" set "state"='closed', "roomVerified"=false, "updatedAt"=now() where "hotelId"=$1 and "guestPhone"=$2`, hotelId, phone); } catch { /* best-effort */ }
+      try { await checkOutGuest(hotelId, { phone }); } catch { /* best-effort */ }
     }
     return { ok: true, data: norm(rows[0]) };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not check out." }; }

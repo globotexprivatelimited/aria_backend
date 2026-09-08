@@ -4,10 +4,10 @@ import { sendTemplateMessage } from "./meta";
 
 const WELCOME_TEMPLATE = process.env.WELCOME_TEMPLATE ?? "guest_welcome";
 
-/** Canonical guest phone: digits only with country code, matching the wa_id Meta sends. */
+/** Canonical guest phone: "+" then digits with country code, matching webhooks/inbound.ts. */
 export function canonicalPhone(raw: string): string {
   const digits = raw.replace(/\D/g, "");
-  return digits.length === 10 ? "91" + digits : digits;
+  return "+" + (digits.length === 10 ? "91" + digits : digits);
 }
 
 export async function checkInGuest(hotelId: string, room: string, name: string, phone: string, checkOut?: Date | string | null) {
