@@ -76,8 +76,6 @@ export async function scheduleStayTriggers(
 ): Promise<void> {
   const now = Date.now();
 
-  await schedule(hotelId, sessionId, guestPhone, "welcome", new Date(now + 10 * MINUTES));
-
   const evening = new Date();
   evening.setHours(18, 30, 0, 0);
   if (evening.getTime() > now) {

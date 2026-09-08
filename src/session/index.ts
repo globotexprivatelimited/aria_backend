@@ -61,6 +61,12 @@ export async function runSession(hotel: SessionHotel, guestPhone: string, text: 
     session = await prisma.session.update({ where: { id: session.id }, data: { state: "prospect", blockedUntil: null } });
   }
 
+  // Only numbers registered by reception at check-in may chat.
+  if (!session.roomVerified) {
+    await sendReply(guestPhone, "Hello! This number is not registered with " + hotel.name + " yet. Please ask our reception to add your WhatsApp number at check-in, and I will be right here to help with your stay.", hotel.hotelId);
+    return { proceed: false, session };
+  }
+
   if (matchesAny(text, CHECKOUT_TERMS)) {
     await closeSession(session.id, "keyword checkout");
     await sendReply(guestPhone, "Thank you for staying with us - safe travels! Message us anytime if there's anything else.", hotel.hotelId);
