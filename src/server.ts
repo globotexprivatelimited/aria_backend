@@ -64,7 +64,7 @@ app.use(cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);              // curl, server-to-server, health checks
     if (allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error("Origin not allowed: " + origin));
+    return cb(null, false);
   },
   credentials: true,
 }));
