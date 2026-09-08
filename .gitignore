@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 .next/
 dist/
 build/
@@ -7,4 +7,5 @@ build/
 .env.*.local
 *.log
 .DS_Store
-Thumbs.db*.bak
+Thumbs.db
+*.bak
