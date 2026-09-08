@@ -1,3 +1,4 @@
+import { sendWhatsAppMessage } from "../lib/meta";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { prisma } from "../db";
 
@@ -114,7 +115,7 @@ dashboardRouter.get("/api/dashboard/conversations/:phone", async (req, res) => {
   res.json({
     phone: guestPhone,
     session: session
-      ? { state: session.state, room: session.roomNumber, name: session.claimedGuestName, verified: session.roomVerified }
+      ? { id: session.id, state: session.state, room: session.roomNumber, name: session.claimedGuestName, verified: session.roomVerified, verificationMethod: session.verificationMethod, checkInDate: session.checkInDate, checkOutDate: session.checkOutDate, lastMessageAt: session.lastMessageAt }
       : null,
     messageCount: messages.length,
     messages: messages.map((m) => ({
@@ -167,4 +168,18 @@ dashboardRouter.get("/api/dashboard/revenue", async (req, res) => {
       activities: activities.map((a) => ({ id: a.id, room: a.roomNumber, status: a.status, createdAt: a.createdAt })),
     },
   });
+});
+
+/** 4b. GM replies to a guest from the console. Plain text, so WhatsApp only accepts it inside the 24 hour window after the guest last wrote. */
+dashboardRouter.post("/api/dashboard/conversations/:phone/reply", async (req, res) => {
+  const hotelId = String(req.body?.hotelId ?? hotelIdOf(req));
+  const guestPhone = req.params.phone;
+  const text = String(req.body?.text ?? "").trim();
+  if (!text) return res.status(400).json({ ok: false, error: "text required" });
+  if (text.length > 4000) return res.status(400).json({ ok: false, error: "Message too long (4000 characters max)." });
+  const session = await prisma.session.findFirst({ where: { hotelId, guestPhone }, orderBy: { createdAt: "desc" } });
+  const sent = await sendWhatsAppMessage(guestPhone, text, hotelId);
+  if (!sent) return res.json({ ok: false, error: "WhatsApp did not accept the message. Free-form replies only work within 24 hours of the guest last writing to you." });
+  const m = await prisma.message.create({ data: { hotelId, guestPhone, sessionId: session?.id ?? null, direction: "outbound", messageType: "text", body: text } });
+  res.json({ ok: true, data: { id: m.id, at: m.createdAt } });
 });
