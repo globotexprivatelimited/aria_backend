@@ -34,6 +34,9 @@ metaRouter.post("/webhooks/meta", async (req, res) => {
     if (!change) return;
 
     // delivery receipts and read markers arrive here too; ignore them
+    for (const st of change.statuses ?? []) {
+      log.info("meta: status", { id: String(st.id ?? ""), status: String(st.status ?? ""), guestPhone: String(st.recipient_id ?? ""), errors: JSON.stringify(st.errors ?? []) });
+    }
     if (!change.messages?.length) return;
 
     const phoneId = String(change.metadata?.phone_number_id ?? "");
