@@ -17,8 +17,10 @@ export const BrainRequest = z.object({
   intent: z.enum(INTENTS),
   detail: z.string().min(1).max(500),
   priority: z.enum(PRIORITIES).default("normal"),
-  quantity: z.number().int().positive().optional(),
-  whenText: z.string().max(120).optional(),
+  quantity: z.preprocess((v) => v ?? undefined, z.number().int().positive().optional()),
+  whenText: z.preprocess((v) => v ?? undefined, z.string().max(120).optional()),
+  items: z.preprocess((v) => v ?? undefined, z.array(z.object({ id: z.preprocess((x) => x ?? undefined, z.string().max(12).optional()), name: z.string().min(1).max(80), qty: z.preprocess((x) => x ?? undefined, z.number().int().positive().max(20).default(1)) })).max(10).optional()),
+  notOnMenu: z.preprocess((v) => v ?? undefined, z.array(z.string().min(1).max(80)).max(6).optional()),
 });
 
 export const BrainOutput = z.object({

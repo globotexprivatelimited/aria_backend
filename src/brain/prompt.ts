@@ -35,7 +35,24 @@ function promiseRule(modes?: DeptModeMap): string {
   return parts.join("\n");
 }
 
-export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap): string {
+/** The hotel live menu, and the rules that keep Aria from selling what is not on it. */
+function menuSection(catalogText?: string): string[] {
+  if (!catalogText) return ["", "MENU: this hotel has not published one to you. For food, drink or spa requests, file the request and say the team will confirm what is available and the price. Never claim something is or is not on the menu, and leave items and notOnMenu empty."];
+  return [
+    "",
+    "MENU - the ONLY food, drink and treatments you may offer. Each line is: code | name | category | diet | price | notes",
+    catalogText,
+    "",
+    "MENU RULES:",
+    "a. For room_service and spa requests, list every item the guest wants in the items array using the exact code and name from the menu, with qty.",
+    "b. Anything they asked for that is not on the menu, or is marked SOLD OUT or NOT SERVED NOW, goes in notOnMenu exactly as they wrote it. Never put it in items and never invent a price for it.",
+    "c. Match loosely on spelling and language: mutton tika means Mutton Tikka; chai means Masala Chai if that is the only chai listed; a Hindi or Bengali dish name matches its menu entry.",
+    "d. In reply, do NOT name any dish, item, price or availability - the system appends the exact order summary and alternatives below your words. Write one or two warm sentences only, for example acknowledging the order and saying the details follow.",
+    "e. Never suggest or describe a dish that is not on this menu.",
+  ];
+}
+
+export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap, catalogText?: string): string {
   const room = session.roomNumber ?? "unknown";
   const name = session.claimedGuestName ?? "the guest";
 
@@ -55,7 +72,7 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     "Shape:",
     '{',
     '  "requests": [',
-    '    { "intent": "...", "detail": "...", "priority": "normal", "quantity": 2, "whenText": "tonight at 8" }',
+    '    { "intent": "...", "detail": "...", "priority": "normal", "quantity": 2, "whenText": "tonight at 8"' + (catalogText ? ', "items": [{ "id": "F3", "name": "Chicken Tikka", "qty": 2 }], "notOnMenu": ["mutton tikka"]' : "") + ' }',
     '  ],',
     '  "reply": "your message to the guest",',
     '  "sentiment": "happy" | "neutral" | "unhappy",',
@@ -78,6 +95,7 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     "human_required  - a complaint, a refund, a billing question, anything needing judgement",
     "emergency       - danger to a person (this should already have been caught upstream)",
     "",
+    ...menuSection(catalogText),
     "RULES - these matter more than being helpful:",
     "1. DECOMPOSE. One message can contain several requests. 'Towels and a table for two' is TWO requests. Each gets its own entry.",
     "2. NEVER INVENT. Do not confirm a service, price, time or facility you were not told about. If unsure, say the team will confirm shortly.",

@@ -1,3 +1,4 @@
+import { loadCatalog, applyCatalog } from "../menu/catalog";
 import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { runSafetyChecks } from "../safety";
@@ -92,7 +93,10 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     }
 
     const deptModes = Object.fromEntries(await loadDeptModes(hotel.hotelId));
-    const { output, usedFallback } = await understand(body, { ...hotel, deptModes }, session);
+    const catalog = await loadCatalog(hotel.hotelId, hotel.timezone ?? null);
+    const brain = await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText }, session);
+    const usedFallback = brain.usedFallback;
+    const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone);
 
     await sendReply(guestPhone, output.reply, hotel.hotelId);
 
