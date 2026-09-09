@@ -1,4 +1,4 @@
-import { loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending } from "../menu/catalog";
+import { loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending, fastPath } from "../menu/catalog";
 import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { runSafetyChecks } from "../safety";
@@ -92,11 +92,12 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
       return;
     }
 
-    const deptModes = Object.fromEntries(await loadDeptModes(hotel.hotelId));
-    const catalog = await loadCatalog(hotel.hotelId, hotel.timezone ?? null);
-    const pending = await loadGuestContext(hotel.hotelId, guestPhone);
-    const history = await recentTurns(hotel.hotelId, guestPhone, messageId);
-    const brain = await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending) }, session, { history });
+    // everything the brain needs, fetched at once rather than one after another
+    const [deptModeEntries, catalog, pending, history] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId)]);
+    const deptModes = Object.fromEntries(deptModeEntries);
+    // a plain answer to an offer Aria just made needs no model call at all
+    const fast = fastPath(body, pending, catalog);
+    const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending) }, session, { history });
     const usedFallback = brain.usedFallback;
     const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body });
 

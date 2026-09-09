@@ -235,18 +235,51 @@ function bestMatch(ask: string, candidates: CatalogItem[]): { item: CatalogItem;
   return best;
 }
 
-const DRINK = ["chai", "tea", "coffee", "espresso", "latte", "cappuccino", "juice", "water", "soda", "lassi", "milk", "cola", "coke", "beer", "wine", "whisky", "whiskey", "cocktail", "mocktail", "shake", "smoothie", "drink", "beverage"];
+const DRINK = ["chai", "tea", "coffee", "espresso", "latte", "cappuccino", "juice", "water", "soda", "lassi", "milk", "cola", "coke", "pepsi", "sprite", "beer", "wine", "whisky", "whiskey", "cocktail", "mocktail", "shake", "smoothie", "drink", "drinks", "beverage", "beverages", "soft"];
+const CATEGORY_HINTS: { words: string[]; category: RegExp }[] = [
+  { words: ["starter", "starters", "snack", "snacks", "appetizer", "appetiser", "bite", "bites", "nibbles"], category: /start|snack|appet|small/i },
+  { words: ["dessert", "desserts", "sweet", "sweets", "ice cream", "icecream", "cake", "pudding"], category: /dessert|sweet|cake|ice/i },
+  { words: ["main", "mains", "main course", "curry", "dinner", "lunch", "meal", "thali"], category: /main|curr|meal|dinner|lunch|thali/i },
+  { words: ["breakfast", "morning"], category: /breakfast/i },
+  { words: ["soup", "soups"], category: /soup/i },
+  { words: ["bread", "roti", "naan", "rice", "biryani", "pulao"], category: /bread|rice|biryan/i },
+];
+const ANCHOR_MATCH = 0.3;   // an existing item close enough in name to shape the suggestions
+const FILLER = ["some", "something", "anything", "a", "an", "any", "the", "please", "pls", "i", "we", "want", "need", "would", "like", "get", "give", "me", "us", "one", "two", "of", "for", "to", "have", "you", "do", "can", "kind", "type", "which", "what"];
+const GENERIC = ["drink", "drinks", "beverage", "beverages", "soft", "cold", "hot", "food", "eat", "eating", "hungry", "menu", "options", "veg", "vegetarian", "nonveg", "non", "sweet", "sweets", "snack", "snacks", "starter", "starters", "dessert", "desserts", "main", "mains", "breakfast", "lunch", "dinner", "meal", "soup", "soups", "bread", "rice", "curry", "appetizer", "appetiser", "bite", "bites", "nibbles", "thali"];
 
-/** What kind of thing the guest asked for, from the words they used; food is the default for anything edible. */
-function inferKind(ask: string, anchor: CatalogItem | null): "drink" | "food" | null {
-  if (anchor?.kind) return anchor.kind === "drink" || anchor.kind === "alcohol" ? "drink" : "food";
-  const a = " " + normalise(ask) + " ";
-  return DRINK.some((w) => a.includes(" " + w + " ")) ? "drink" : "food";
+/** "some snacks", "soft drink", "veg food" name a category, not a dish - they get a list, not an apology. */
+function isGenericAsk(ask: string): boolean {
+  const words = normalise(ask).split(" ").filter((w) => w && !FILLER.includes(w));
+  return words.length > 0 && words.every((w) => GENERIC.includes(w));
 }
-function kindMatches(kind: "drink" | "food" | null, item: CatalogItem): boolean {
-  if (!kind) return true;
-  const k = item.kind === "drink" || item.kind === "alcohol" ? "drink" : "food";
-  return k === kind;
+const LABELS: Record<string, string> = {
+  eat: "food", eating: "food", hungry: "food", menu: "food", options: "food", sweet: "desserts", sweets: "desserts", dessert: "desserts",
+  snack: "snacks", starter: "starters", appetizer: "starters", appetiser: "starters", bite: "snacks", bites: "snacks", nibbles: "snacks",
+  drink: "drinks", beverage: "drinks", beverages: "drinks", main: "mains", soup: "soups", cold: "cold drinks", hot: "hot drinks",
+};
+/** The category the guest named, in the words a menu would use: "some snacks" -> snacks, "something to eat" -> food. */
+function askLabel(ask: string): string {
+  const words = normalise(ask).split(" ").filter((w) => w && !FILLER.includes(w)).map((w) => LABELS[w] ?? w);
+  if (words.length === 0 || words.length > 3) return "that";
+  if (words.length === 2 && words[0] === "soft" && words[1] === "drinks") return "soft drinks";
+  return Array.from(new Set(words)).join(" ");
+}
+
+function kindOf(item: CatalogItem): "drink" | "food" {
+  return item.kind === "drink" || item.kind === "alcohol" ? "drink" : "food";
+}
+/** What the words say the guest wants: a drink, a dish, or no hint at all. */
+function inferKindFromWords(ask: string): "drink" | "food" | null {
+  const a = " " + normalise(ask) + " ";
+  if (DRINK.some((w) => a.includes(" " + w + " "))) return "drink";
+  if (inferDiet(ask) || inferCategory(ask)) return "food";
+  return null;
+}
+function inferCategory(ask: string): RegExp | null {
+  const a = " " + normalise(ask) + " ";
+  for (const h of CATEGORY_HINTS) if (h.words.some((w) => a.includes(" " + w + " "))) return h.category;
+  return null;
 }
 
 /**
@@ -256,20 +289,28 @@ function kindMatches(kind: "drink" | "food" | null, item: CatalogItem): boolean 
  * padded in just to make three: if the hotel has nothing comparable, the list is empty and the
  * guest is told so, rather than being offered paneer for a coffee.
  */
-function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<string>, anchor: CatalogItem | null): CatalogItem[] {
+function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<string>, anchorIn: CatalogItem | null): CatalogItem[] {
   const pref = inferDiet(ask);
-  const kind = dept === "spa" ? null : inferKind(ask, anchor);
-  const pool = catalog.items.filter((i) => i.dept === dept && !exclude.has(i.id) && availability(i, catalog.timezone).ok && kindMatches(kind, i));
+  const generic = dept !== "spa" && isGenericAsk(ask);
+  const wordKind = dept === "spa" ? null : inferKindFromWords(ask);
+  const kind = dept === "spa" ? null : wordKind ?? (anchorIn ? kindOf(anchorIn) : "food");
+  // an anchor that disagrees with the words is a coincidence of spelling, not a clue
+  const anchor = anchorIn && (dept === "spa" || kindOf(anchorIn) === kind) ? anchorIn : null;
+  const category = inferCategory(ask);
+  const pool = catalog.items.filter((i) => i.dept === dept && !exclude.has(i.id) && availability(i, catalog.timezone).ok && (!kind || kindOf(i) === kind)
+    && (!category || (i.category != null && category.test(i.category))) && (!generic || !pref || dietMatches(pref, i)));
   const scored = pool.map((item) => {
     const sim = similarity(ask, item.name);
     let score = sim;
     const sameCategory = !!(anchor && anchor.category && item.category === anchor.category);
+    const askedCategory = !!(category && item.category && category.test(item.category));
     if (sameCategory) score += 0.15;
+    if (askedCategory) score += 0.3;
     if (anchor && anchor.diet && item.diet === anchor.diet) score += 0.1;
     if (dietMatches(pref, item)) score += 0.2;
     if (item.bestseller) score += 0.05;
     if (item.signature) score += 0.05;
-    return { item, score, real: sim >= WEAK_MATCH || sameCategory };
+    return { item, score, real: sim >= WEAK_MATCH || sameCategory || askedCategory };
   });
   scored.sort((a, b) => b.score - a.score);
   const picked: CatalogItem[] = [];
@@ -279,6 +320,8 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
       if (!picked.some((p) => p.id === s.item.id)) picked.push(s.item);
     }
   };
+  // a category ask lists what there is in that category; a dish ask gets real lookalikes first
+  if (generic || category) { take(scored); return picked; }
   take(scored.filter((s) => s.real));
   take(scored.filter((s) => (s.item.bestseller || s.item.signature) && (!pref || dietMatches(pref, s.item))));
   // a drink ask with no similar drink: offer what drinks there are, since that is what they want
@@ -398,21 +441,44 @@ function resolvePendingChoice(message: string, ctx: GuestContext, catalog: Catal
   return null;
 }
 
-/** Keep the model's opener only if it stays out of the facts; otherwise a plain one, so nothing is said twice. */
-function opener(reply: string, mentions: string[], guestName: string | null): string {
+/** Keep the model's opener only if it stays out of the facts; otherwise a plain one - or none when nothing was ordered. */
+function opener(reply: string, mentions: string[], guestName: string | null, ordered: boolean): string | null {
   const r = reply.toLowerCase();
   const leaks = mentions.some((m) => m && r.includes(m.toLowerCase()))
     || /\bmenu\b|not available|unavailable|sold out|don.t have|do not have|not something we|instead|alternative|\bRs\.?\s?\d|\u20B9/i.test(reply);
   if (!leaks) return reply.trim();
+  if (!ordered) return null;
   const first = (guestName ?? "").trim().split(/\s+/)[0];
   return "On it" + (first ? ", " + first : "") + "! Here are the details:";
+}
+
+const NO = ["no", "nah", "nope", "cancel", "nahi", "nai", "na", "not now", "no thanks", "leave it"];
+
+/**
+ * A short, unambiguous answer to a pending offer is handled without the model - "yes", "2",
+ * "the paneer" come back in well under a second. Anything longer goes to the model, which still
+ * sees the offer and the thread.
+ */
+export function fastPath(message: string, pending: GuestContext | null, catalog: Catalog): BrainOutput | null {
+  if (!pending) return null;
+  const words = normalise(message).split(" ").filter(Boolean);
+  if (words.length === 0 || words.length > 6) return null;
+  const choice = resolvePendingChoice(message, pending, catalog);
+  if (!choice || !choice.code) return null;
+  const intent: "spa" | "room_service" = pending.dept === "spa" ? "spa" : "room_service";
+  return {
+    requests: [{ intent, detail: choice.text, priority: "normal", items: [{ id: choice.code, name: choice.text, qty: choice.qty }] }],
+    reply: "Perfect.",
+    sentiment: "neutral",
+    needsHuman: false,
+  };
 }
 
 /* ---------------------------------------------------------------- applying --------- */
 
 type Ask = { text: string; qty: number; code?: string };
 type Confirmed = { item: CatalogItem; qty: number };
-type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[] };
+type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[]; generic?: boolean };
 type Ambiguous = { ask: string; qty: number; options: CatalogItem[] };
 const AMBIGUITY_GAP = 0.1;
 
@@ -453,8 +519,8 @@ function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confir
     }
     if (!item) {
       const near = bestMatch(ask.text, pool);
-      const anchor = near && near.score >= WEAK_MATCH ? near.item : null;
-      unavailable.push({ ask: ask.text, item: null, reason: "not_on_menu", suggestions: suggest(ask.text, dept, catalog, new Set(), anchor) });
+      const anchor = near && near.score >= ANCHOR_MATCH ? near.item : null;
+      unavailable.push({ ask: ask.text, item: null, reason: "not_on_menu", suggestions: suggest(ask.text, dept, catalog, new Set(), anchor), generic: dept !== "spa" && isGenericAsk(ask.text) });
       continue;
     }
     const a = availability(item, catalog.timezone);
@@ -508,24 +574,29 @@ async function placeOrder(hotelId: string, room: string | null, guestPhone: stri
   }
 }
 
-function reasonText(u: Unavailable): string {
-  const name = u.item ? u.item.name : u.ask;
-  if (u.reason === "sold_out") return name + " is sold out today.";
-  if (u.reason === "not_served_now" && u.item?.servedFrom && u.item?.servedTo) {
-    return name + " is served " + to12h(u.item.servedFrom) + " to " + to12h(u.item.servedTo) + ".";
-  }
-  return "Sorry, " + name + " is not on our menu.";
+function itemLabel(i: CatalogItem, dept: CatalogDept): string {
+  return i.name + " (" + money(i.price) + (dept === "spa" && i.durationMin ? ", " + i.durationMin + " min" : "") + ")";
 }
 
-function suggestionText(items: CatalogItem[], dept: CatalogDept): string {
-  if (items.length === 0) return " We do not have anything similar on the menu right now.";
-  const parts = items.map((i) => i.name + " (" + money(i.price) + (dept === "spa" && i.durationMin ? ", " + i.durationMin + " min" : "") + ")");
-  if (parts.length === 1) return " Closest we have: " + parts[0] + ". Would you like that instead?";
-  return " Closest we have: " + parts.join(", ") + ". Just tell me which you would like.";
+/** The sentence for something we cannot serve: what, why, and what we have instead. */
+function unavailableText(u: Unavailable, dept: CatalogDept): string {
+  const parts = u.suggestions.map((i) => itemLabel(i, dept));
+  if (u.generic) {
+    if (parts.length === 0) return "We do not have " + askLabel(u.ask) + " on the menu right now.";
+    return "For " + askLabel(u.ask) + ", here is what we have: " + parts.join(", ") + ". Just tell me which you would like.";
+  }
+  const name = u.item ? u.item.name : u.ask;
+  let why: string;
+  if (u.reason === "sold_out") why = name + " is sold out today.";
+  else if (u.reason === "not_served_now" && u.item?.servedFrom && u.item?.servedTo) why = name + " is served " + to12h(u.item.servedFrom) + " to " + to12h(u.item.servedTo) + ".";
+  else why = "Sorry, " + name + " is not on our menu.";
+  if (parts.length === 0) return why + " We do not have anything similar right now.";
+  if (parts.length === 1) return why + " Closest we have: " + parts[0] + ". Would you like that instead?";
+  return why + " Closest we have: " + parts.join(", ") + ". Just tell me which you would like.";
 }
 
 function ambiguityText(a: Ambiguous, dept: CatalogDept): string {
-  const opts = a.options.map((i) => i.name + " (" + money(i.price) + (dept === "spa" && i.durationMin ? ", " + i.durationMin + " min" : "") + ")");
+  const opts = a.options.map((i) => itemLabel(i, dept));
   return "For " + a.ask + ", did you mean " + opts.slice(0, -1).join(", ") + " or " + opts[opts.length - 1] + "? Reply with the one you would like.";
 }
 
@@ -538,7 +609,7 @@ function foodSummary(room: string | null, confirmed: Confirmed[], unavailable: U
     const prep = Math.max(0, ...confirmed.map((c) => c.item.prepMins));
     lines.push("Total " + money(total) + (prep ? ". About " + prep + " minutes." : "."));
   }
-  for (const u of unavailable) lines.push((lines.length ? "\n" : "") + reasonText(u) + suggestionText(u.suggestions, "fb"));
+  for (const u of unavailable) lines.push((lines.length ? "\n" : "") + unavailableText(u, "fb"));
   for (const a of ambiguous) lines.push((lines.length ? "\n" : "") + ambiguityText(a, "fb"));
   return lines.join("\n");
 }
@@ -550,7 +621,7 @@ function spaSummary(confirmed: Confirmed[], unavailable: Unavailable[], ambiguou
     for (const c of confirmed) lines.push("- " + c.item.name + " (" + money(c.item.price) + (c.item.durationMin ? ", " + c.item.durationMin + " min" : "") + ")");
     lines.push("The spa team will confirm your time shortly.");
   }
-  for (const u of unavailable) lines.push((lines.length ? "\n" : "") + reasonText(u) + suggestionText(u.suggestions, "spa"));
+  for (const u of unavailable) lines.push((lines.length ? "\n" : "") + unavailableText(u, "spa"));
   for (const a of ambiguous) lines.push((lines.length ? "\n" : "") + ambiguityText(a, "spa"));
   return lines.join("\n");
 }
@@ -597,6 +668,7 @@ export async function applyCatalog(
   let nextContext: GuestContext | null = null;
   let touchedFood = false;
   let touchedSpa = false;
+  let ordered = false;
 
   const foodRequests = output.requests.filter((r) => r.intent === "room_service" && catalog.configured.fb);
   const spaRequests = output.requests.filter((r) => r.intent === "spa" && catalog.configured.spa);
@@ -626,6 +698,7 @@ export async function applyCatalog(
       else unavailable.push({ ask: c.item.name, item: c.item, reason: "sold_out", suggestions: suggest(c.item.name, "fb", catalog, new Set([c.item.id]), c.item) });
     }
     if (placed.length) {
+      ordered = true;
       const orderId = opts.dryRun ? null : await placeOrder(hotelId, room, guestPhone, placed);
       const total = placed.reduce((s, c) => s + c.item.price * c.qty, 0);
       const first = foodRequests[0] ?? { intent: "room_service" as const, detail: "", priority: "normal" as const };
@@ -649,6 +722,7 @@ export async function applyCatalog(
     const asks = spaRequests.flatMap((r) => asksFrom(r, "spa", catalog)).concat(pendingDept === "spa" ? extraAsks : []);
     const { confirmed, unavailable, ambiguous } = resolveAsks(asks, "spa", catalog);
     if (confirmed.length) {
+      ordered = true;
       const first = spaRequests[0] ?? { intent: "spa" as const, detail: "", priority: "normal" as const };
       const when = spaRequests.map((r) => r.whenText).find(Boolean);
       kept.push({
@@ -664,13 +738,14 @@ export async function applyCatalog(
     log.info("catalog: spa resolved", { confirmed: confirmed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
   }
 
+  const declined = !!(pending && opts.message && NO.some((n) => normalise(opts.message!) === n));
   if (!opts.dryRun) {
     if (nextContext) await saveGuestContext(hotelId, guestPhone, nextContext);
-    else if (touchedFood || touchedSpa) await clearGuestContext(hotelId, guestPhone);
+    else if (touchedFood || touchedSpa || declined) await clearGuestContext(hotelId, guestPhone);
   }
 
   const extra = summaries.filter(Boolean).join("\n\n");
   if (!extra) return { ...output, requests: kept };
-  const reply = opener(output.reply, mentions, session.claimedGuestName ?? null) + "\n\n" + extra;
-  return { ...output, requests: kept, reply };
+  const head = opener(output.reply, mentions, session.claimedGuestName ?? null, ordered);
+  return { ...output, requests: kept, reply: head ? head + "\n\n" + extra : extra };
 }
