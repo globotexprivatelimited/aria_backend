@@ -267,7 +267,11 @@ function askLabel(ask: string): string {
 }
 
 function kindOf(item: CatalogItem): "drink" | "food" {
-  return item.kind === "drink" || item.kind === "alcohol" ? "drink" : "food";
+  if (item.kind === "drink" || item.kind === "alcohol") return "drink";
+  // GMs often leave the type on the default "food" - the category or the name usually gives it away
+  if (item.category && /bever|drink|tea|coffee|juice|bar\b|mocktail|cocktail|shake|smoothie|lassi/i.test(item.category)) return "drink";
+  const n = " " + normalise(item.name) + " ";
+  return DRINK.some((w) => w !== "soft" && n.includes(" " + w + " ")) ? "drink" : "food";
 }
 /** What the words say the guest wants: a drink, a dish, or no hint at all. */
 function inferKindFromWords(ask: string): "drink" | "food" | null {
