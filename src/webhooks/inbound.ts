@@ -1,4 +1,4 @@
-import { loadCatalog, applyCatalog } from "../menu/catalog";
+import { loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending } from "../menu/catalog";
 import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { runSafetyChecks } from "../safety";
@@ -94,9 +94,11 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
 
     const deptModes = Object.fromEntries(await loadDeptModes(hotel.hotelId));
     const catalog = await loadCatalog(hotel.hotelId, hotel.timezone ?? null);
-    const brain = await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText }, session);
+    const pending = await loadGuestContext(hotel.hotelId, guestPhone);
+    const history = await recentTurns(hotel.hotelId, guestPhone, messageId);
+    const brain = await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending) }, session, { history });
     const usedFallback = brain.usedFallback;
-    const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone);
+    const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body });
 
     await sendReply(guestPhone, output.reply, hotel.hotelId);
 

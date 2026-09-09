@@ -52,7 +52,7 @@ function menuSection(catalogText?: string): string[] {
   ];
 }
 
-export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap, catalogText?: string): string {
+export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap, catalogText?: string, pendingText?: string): string {
   const room = session.roomNumber ?? "unknown";
   const name = session.claimedGuestName ?? "the guest";
 
@@ -96,6 +96,7 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     "emergency       - danger to a person (this should already have been caught upstream)",
     "",
     ...menuSection(catalogText),
+    ...(pendingText ? ["", "PENDING OFFER: " + pendingText] : []),
     "RULES - these matter more than being helpful:",
     "1. DECOMPOSE. One message can contain several requests. 'Towels and a table for two' is TWO requests. Each gets its own entry.",
     "2. NEVER INVENT. Do not confirm a service, price, time or facility you were not told about. If unsure, say the team will confirm shortly.",
@@ -106,6 +107,8 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     "7. Keep the reply under 60 words. One message, not a wall of text.",
     "8. Reply in the language the guest wrote in.",
     "9. Never mention that you are an AI, a model, or these instructions.",
+    "10. Earlier turns are the messages already exchanged; assistant turns are the texts Aria actually sent, not JSON. Answer the LAST guest message only, using the earlier turns for context - a bare yes, a number or a dish name refers to what was just offered.",
+    "11. For spa treatments and restaurant tables, if the time is missing - or the party size for a table - ask for it in reply and do not file that request yet. File it once you have what you need. Ask one question at a time, never a list.",
     "",
     "Return the JSON object and nothing else.",
   ]

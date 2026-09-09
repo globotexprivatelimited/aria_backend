@@ -33,13 +33,32 @@ const SAFE_FALLBACK: BrainOutput = {
   needsHuman: true,
 };
 
-type BrainHotel = { name: string; timezone?: string | null; deptModes?: DeptModeMap; catalogText?: string };
+type BrainHotel = { name: string; timezone?: string | null; deptModes?: DeptModeMap; catalogText?: string; pendingText?: string };
+export type BrainTurn = { role: "user" | "assistant"; content: string };
 type BrainSession = { roomNumber?: string | null; claimedGuestName?: string | null; roomVerified?: boolean };
+
+/** Earlier turns give the model the thread. Same-role turns are merged and the exchange must open with the guest. */
+function buildMessages(history: BrainTurn[], message: string): Anthropic.MessageParam[] {
+  const out: Anthropic.MessageParam[] = [];
+  for (const t of history) {
+    const content = t.content.trim();
+    if (!content) continue;
+    if (out.length === 0 && t.role !== "user") continue;
+    const last = out[out.length - 1];
+    if (last && last.role === t.role) last.content = String(last.content) + "`n" + content;
+    else out.push({ role: t.role, content });
+  }
+  const last = out[out.length - 1];
+  if (last && last.role === "user") last.content = String(last.content) + "`n" + message;
+  else out.push({ role: "user", content: message });
+  return out;
+}
 
 export async function understand(
   message: string,
   hotel: BrainHotel,
-  session: BrainSession
+  session: BrainSession,
+  opts: { history?: BrainTurn[] } = {}
 ): Promise<{ output: BrainOutput; usedFallback: boolean }> {
   const anthropic = getClient();
   if (!anthropic) {
@@ -47,7 +66,7 @@ export async function understand(
     return { output: SAFE_FALLBACK, usedFallback: true };
   }
 
-  const system = buildSystemPrompt(hotel, session, hotel.deptModes, hotel.catalogText);
+  const system = buildSystemPrompt(hotel, session, hotel.deptModes, hotel.catalogText, hotel.pendingText);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -55,7 +74,7 @@ export async function understand(
         model: MODEL,
         max_tokens: MAX_TOKENS,
         system,
-        messages: [{ role: "user", content: message }],
+        messages: buildMessages(opts.history ?? [], message),
       });
 
       const text = res.content

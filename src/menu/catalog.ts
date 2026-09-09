@@ -235,22 +235,31 @@ function bestMatch(ask: string, candidates: CatalogItem[]): { item: CatalogItem;
   return best;
 }
 
-const DRINK = ["chai", "tea", "coffee", "juice", "water", "soda", "lassi", "milk", "cola", "coke", "beer", "wine", "whisky", "whiskey", "cocktail", "mocktail", "shake", "smoothie"];
+const DRINK = ["chai", "tea", "coffee", "espresso", "latte", "cappuccino", "juice", "water", "soda", "lassi", "milk", "cola", "coke", "beer", "wine", "whisky", "whiskey", "cocktail", "mocktail", "shake", "smoothie", "drink", "beverage"];
 
-function inferKind(ask: string): "drink" | null {
+/** What kind of thing the guest asked for, from the words they used; food is the default for anything edible. */
+function inferKind(ask: string, anchor: CatalogItem | null): "drink" | "food" | null {
+  if (anchor?.kind) return anchor.kind === "drink" || anchor.kind === "alcohol" ? "drink" : "food";
   const a = " " + normalise(ask) + " ";
-  return DRINK.some((w) => a.includes(" " + w + " ")) ? "drink" : null;
+  return DRINK.some((w) => a.includes(" " + w + " ")) ? "drink" : "food";
+}
+function kindMatches(kind: "drink" | "food" | null, item: CatalogItem): boolean {
+  if (!kind) return true;
+  const k = item.kind === "drink" || item.kind === "alcohol" ? "drink" : "food";
+  return k === kind;
 }
 
 /**
- * Up to three alternatives for something we cannot serve. Real matches first (a similar name, or
- * the same category as the item they wanted), then the house favourites of the right diet, then
- * whatever ranks best - so the guest always gets three, and the good ones come first.
+ * Up to three alternatives for something we cannot serve - and only things that are actually
+ * alternatives. A drink ask is answered with drinks, a dish with dishes; real matches (similar
+ * name or same category) come first, then the house favourites of the right diet. Nothing is
+ * padded in just to make three: if the hotel has nothing comparable, the list is empty and the
+ * guest is told so, rather than being offered paneer for a coffee.
  */
 function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<string>, anchor: CatalogItem | null): CatalogItem[] {
   const pref = inferDiet(ask);
-  const kind = anchor?.kind ?? inferKind(ask);
-  const pool = catalog.items.filter((i) => i.dept === dept && !exclude.has(i.id) && availability(i, catalog.timezone).ok);
+  const kind = dept === "spa" ? null : inferKind(ask, anchor);
+  const pool = catalog.items.filter((i) => i.dept === dept && !exclude.has(i.id) && availability(i, catalog.timezone).ok && kindMatches(kind, i));
   const scored = pool.map((item) => {
     const sim = similarity(ask, item.name);
     let score = sim;
@@ -258,7 +267,6 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
     if (sameCategory) score += 0.15;
     if (anchor && anchor.diet && item.diet === anchor.diet) score += 0.1;
     if (dietMatches(pref, item)) score += 0.2;
-    if (kind && item.kind === kind) score += 0.15;
     if (item.bestseller) score += 0.05;
     if (item.signature) score += 0.05;
     return { item, score, real: sim >= WEAK_MATCH || sameCategory };
@@ -273,8 +281,131 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
   };
   take(scored.filter((s) => s.real));
   take(scored.filter((s) => (s.item.bestseller || s.item.signature) && (!pref || dietMatches(pref, s.item))));
-  take(scored);
+  // a drink ask with no similar drink: offer what drinks there are, since that is what they want
+  if (kind === "drink" || dept === "spa") take(scored);
   return picked;
+}
+
+/* ---------------------------------------------------------------- memory ----------- */
+
+/** What Aria is waiting on from this guest - the options just offered, and for what. */
+export type GuestContext = {
+  kind: "choose";
+  dept: CatalogDept;
+  ask: string;
+  qty: number;
+  options: { code: string; name: string; price: number }[];
+};
+
+export type BrainTurn = { role: "user" | "assistant"; content: string };
+
+const CONTEXT_TTL_MINUTES = 45;
+let contextTableReady = false;
+
+async function ensureContextTable(): Promise<void> {
+  if (contextTableReady) return;
+  try {
+    await prisma.$executeRawUnsafe(
+      `create table if not exists guest_context (
+         hotel_id text not null, guest_phone text not null, kind text not null, data jsonb not null default '{}'::jsonb,
+         expires_at timestamptz not null, updated_at timestamptz not null default now(),
+         primary key (hotel_id, guest_phone))`);
+    contextTableReady = true;
+  } catch (e) {
+    log.warn("catalog: guest_context table unavailable", { detail: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+export async function loadGuestContext(hotelId: string, guestPhone: string): Promise<GuestContext | null> {
+  await ensureContextTable();
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `select kind, data from guest_context where hotel_id = $1 and guest_phone = $2 and expires_at > now()`, hotelId, guestPhone);
+    const r = rows[0];
+    if (!r || r.kind !== "choose") return null;
+    const data = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+    return data && Array.isArray(data.options) ? { kind: "choose", ...data } as GuestContext : null;
+  } catch { return null; }
+}
+
+async function saveGuestContext(hotelId: string, guestPhone: string, ctx: GuestContext): Promise<void> {
+  await ensureContextTable();
+  try {
+    const { kind, ...data } = ctx;
+    await prisma.$executeRawUnsafe(
+      `insert into guest_context (hotel_id, guest_phone, kind, data, expires_at)
+       values ($1, $2, $3, $4::jsonb, now() + ($5 || ' minutes')::interval)
+       on conflict (hotel_id, guest_phone) do update set kind = excluded.kind, data = excluded.data, expires_at = excluded.expires_at, updated_at = now()`,
+      hotelId, guestPhone, kind, JSON.stringify(data), String(CONTEXT_TTL_MINUTES));
+  } catch (e) {
+    log.warn("catalog: could not save guest context", { detail: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+async function clearGuestContext(hotelId: string, guestPhone: string): Promise<void> {
+  await ensureContextTable();
+  try { await prisma.$executeRawUnsafe(`delete from guest_context where hotel_id = $1 and guest_phone = $2`, hotelId, guestPhone); } catch { /* best effort */ }
+}
+
+/** The last few messages either way, oldest first, excluding the one being handled now. */
+export async function recentTurns(hotelId: string, guestPhone: string, currentMessageId: string, limit = 8): Promise<BrainTurn[]> {
+  try {
+    const rows = await prisma.message.findMany({
+      where: { hotelId, guestPhone },
+      orderBy: { createdAt: "desc" },
+      take: limit + 1,
+    });
+    return rows
+      .filter((m) => m.messageId !== currentMessageId && m.body && m.body.trim())
+      .slice(0, limit)
+      .reverse()
+      .map((m) => ({ role: m.direction === "inbound" ? "user" : "assistant", content: (m.body ?? "").trim() }));
+  } catch { return []; }
+}
+
+/** The pending offer, phrased for the system prompt. */
+export function describePending(ctx: GuestContext | null): string {
+  if (!ctx) return "";
+  const opts = ctx.options.map((o) => o.code + " " + o.name + " " + money(o.price)).join("; ");
+  return "You just offered these instead of " + ctx.ask + " (" + ctx.qty + " wanted): " + opts + ". If this message picks one - by name, by number, or with a yes - put it in items with that exact code and qty " + ctx.qty + ". If they decline or talk about something else, leave items empty and just continue normally.";
+}
+
+const ORDINALS = ["first", "second", "third", "1st", "2nd", "3rd"];
+const YES = ["yes", "yeah", "yep", "ok", "okay", "sure", "haan", "ha", "thik", "theek", "fine", "please", "go ahead"];
+
+/** Server-side reading of a reply to a pending offer, for when the model returned nothing usable. */
+function resolvePendingChoice(message: string, ctx: GuestContext, catalog: Catalog): Ask | null {
+  const m = normalise(message);
+  if (!m) return null;
+  const options = ctx.options.map((o) => catalog.byCode.get(o.code)).filter((i): i is CatalogItem => !!i);
+  if (options.length === 0) return null;
+  const qtyMatch = m.match(/\b(\d{1,2})\b/);
+  const qty = qtyMatch && Number(qtyMatch[1]) <= 20 && !/^\s*\d{1,2}\s*$/.test(m) ? Number(qtyMatch[1]) : ctx.qty;
+  const digitOnly = /^\s*(\d)\s*$/.exec(m);
+  if (digitOnly) {
+    const idx = Number(digitOnly[1]) - 1;
+    return options[idx] ? { text: options[idx].name, qty: ctx.qty, code: options[idx].code } : null;
+  }
+  const ord = ORDINALS.findIndex((o) => m.includes(o));
+  if (ord >= 0 && options[ord % 3]) return { text: options[ord % 3].name, qty, code: options[ord % 3].code };
+  let best: { item: CatalogItem; score: number } | null = null;
+  for (const item of options) {
+    const s = similarity(m, item.name);
+    if (!best || s > best.score) best = { item, score: s };
+  }
+  if (best && best.score >= 0.45) return { text: best.item.name, qty, code: best.item.code };
+  if (options.length === 1 && YES.some((y) => m === y || m.startsWith(y + " ") || m.endsWith(" " + y))) return { text: options[0].name, qty, code: options[0].code };
+  return null;
+}
+
+/** Keep the model's opener only if it stays out of the facts; otherwise a plain one, so nothing is said twice. */
+function opener(reply: string, mentions: string[], guestName: string | null): string {
+  const r = reply.toLowerCase();
+  const leaks = mentions.some((m) => m && r.includes(m.toLowerCase()))
+    || /\bmenu\b|not available|unavailable|sold out|don.t have|do not have|not something we|instead|alternative|\bRs\.?\s?\d|\u20B9/i.test(reply);
+  if (!leaks) return reply.trim();
+  const first = (guestName ?? "").trim().split(/\s+/)[0];
+  return "On it" + (first ? ", " + first : "") + "! Here are the details:";
 }
 
 /* ---------------------------------------------------------------- applying --------- */
@@ -282,6 +413,8 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
 type Ask = { text: string; qty: number; code?: string };
 type Confirmed = { item: CatalogItem; qty: number };
 type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[] };
+type Ambiguous = { ask: string; qty: number; options: CatalogItem[] };
+const AMBIGUITY_GAP = 0.1;
 
 function asksFrom(r: BrainRequest, dept: CatalogDept, catalog: Catalog): Ask[] {
   const asks: Ask[] = [];
@@ -297,16 +430,26 @@ function asksFrom(r: BrainRequest, dept: CatalogDept, catalog: Catalog): Ask[] {
   return asks;
 }
 
-function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confirmed: Confirmed[]; unavailable: Unavailable[] } {
+function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confirmed: Confirmed[]; unavailable: Unavailable[]; ambiguous: Ambiguous[] } {
   const confirmed: Confirmed[] = [];
   const unavailable: Unavailable[] = [];
+  const ambiguous: Ambiguous[] = [];
   const pool = catalog.items.filter((i) => i.dept === dept);
   for (const ask of asks) {
     let item: CatalogItem | null = ask.code ? catalog.byCode.get(ask.code) ?? null : null;
     if (item && item.dept !== dept) item = null;
     if (!item) {
-      const m = bestMatch(ask.text, pool);
-      if (m && m.score >= STRONG_MATCH) item = m.item;
+      // rank the whole pool; two near-equal strong matches means we ask rather than guess
+      const ranked = pool.map((i) => ({ item: i, score: similarity(ask.text, i.name) })).sort((a, b) => b.score - a.score);
+      const best = ranked[0];
+      if (best && best.score >= STRONG_MATCH) {
+        const rivals = ranked.slice(1).filter((r) => r.score >= STRONG_MATCH && best.score - r.score < AMBIGUITY_GAP && availability(r.item, catalog.timezone).ok);
+        if (rivals.length > 0 && availability(best.item, catalog.timezone).ok) {
+          ambiguous.push({ ask: ask.text, qty: ask.qty, options: [best.item, ...rivals.map((r) => r.item)].slice(0, MAX_SUGGESTIONS) });
+          continue;
+        }
+        item = best.item;
+      }
     }
     if (!item) {
       const near = bestMatch(ask.text, pool);
@@ -323,7 +466,7 @@ function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confir
     const existing = confirmed.find((c) => c.item.id === item!.id);
     if (existing) existing.qty += qty; else confirmed.push({ item, qty });
   }
-  return { confirmed, unavailable };
+  return { confirmed, unavailable, ambiguous };
 }
 
 /** Race-safe stock decrement via the decrement_stock() function; falls back to a plain update if it is missing. */
@@ -375,12 +518,18 @@ function reasonText(u: Unavailable): string {
 }
 
 function suggestionText(items: CatalogItem[], dept: CatalogDept): string {
-  if (items.length === 0) return "";
+  if (items.length === 0) return " We do not have anything similar on the menu right now.";
   const parts = items.map((i) => i.name + " (" + money(i.price) + (dept === "spa" && i.durationMin ? ", " + i.durationMin + " min" : "") + ")");
+  if (parts.length === 1) return " Closest we have: " + parts[0] + ". Would you like that instead?";
   return " Closest we have: " + parts.join(", ") + ". Just tell me which you would like.";
 }
 
-function foodSummary(room: string | null, confirmed: Confirmed[], unavailable: Unavailable[]): string {
+function ambiguityText(a: Ambiguous, dept: CatalogDept): string {
+  const opts = a.options.map((i) => i.name + " (" + money(i.price) + (dept === "spa" && i.durationMin ? ", " + i.durationMin + " min" : "") + ")");
+  return "For " + a.ask + ", did you mean " + opts.slice(0, -1).join(", ") + " or " + opts[opts.length - 1] + "? Reply with the one you would like.";
+}
+
+function foodSummary(room: string | null, confirmed: Confirmed[], unavailable: Unavailable[], ambiguous: Ambiguous[] = []): string {
   const lines: string[] = [];
   if (confirmed.length) {
     lines.push("Your order" + (room ? " for Room " + room : "") + ":");
@@ -390,10 +539,11 @@ function foodSummary(room: string | null, confirmed: Confirmed[], unavailable: U
     lines.push("Total " + money(total) + (prep ? ". About " + prep + " minutes." : "."));
   }
   for (const u of unavailable) lines.push((lines.length ? "\n" : "") + reasonText(u) + suggestionText(u.suggestions, "fb"));
+  for (const a of ambiguous) lines.push((lines.length ? "\n" : "") + ambiguityText(a, "fb"));
   return lines.join("\n");
 }
 
-function spaSummary(confirmed: Confirmed[], unavailable: Unavailable[]): string {
+function spaSummary(confirmed: Confirmed[], unavailable: Unavailable[], ambiguous: Ambiguous[] = []): string {
   const lines: string[] = [];
   if (confirmed.length) {
     lines.push("Spa request noted:");
@@ -401,6 +551,7 @@ function spaSummary(confirmed: Confirmed[], unavailable: Unavailable[]): string 
     lines.push("The spa team will confirm your time shortly.");
   }
   for (const u of unavailable) lines.push((lines.length ? "\n" : "") + reasonText(u) + suggestionText(u.suggestions, "spa"));
+  for (const a of ambiguous) lines.push((lines.length ? "\n" : "") + ambiguityText(a, "spa"));
   return lines.join("\n");
 }
 
@@ -413,34 +564,62 @@ async function noteMissed(hotelId: string, dept: CatalogDept, room: string | nul
   }
 }
 
+/** The offer to remember for the guest's next message: an ambiguity to settle, else the first set of alternatives. */
+function offerFrom(ambiguous: Ambiguous[], unavailable: Unavailable[], dept: CatalogDept, defaultQty: number): GuestContext | null {
+  const pick = (items: CatalogItem[]) => items.map((i) => ({ code: i.code, name: i.name, price: i.price }));
+  const a = ambiguous[0];
+  if (a) return { kind: "choose", dept, ask: a.ask, qty: a.qty, options: pick(a.options) };
+  const u = unavailable.find((x) => x.suggestions.length > 0);
+  if (u) return { kind: "choose", dept, ask: u.ask, qty: defaultQty, options: pick(u.suggestions) };
+  return null;
+}
+
 /**
  * Check the brain's answer against the catalog. Everything the guest asked to eat or drink is
  * resolved as ONE order (however many requests the brain split it into); things the hotel does not
  * offer are dropped and logged as missed demand; confirmed items become an order with real prices;
- * the guest's reply gets the exact summary appended. Departments with no catalog are left untouched.
+ * the guest's reply gets the exact summary appended. If Aria had just offered alternatives and the
+ * guest is answering that offer, the answer is honoured even when the model missed it. Departments
+ * with no catalog are left untouched.
  */
 export async function applyCatalog(
   output: BrainOutput,
   catalog: Catalog,
   hotelId: string,
-  session: { roomNumber?: string | null },
+  session: { roomNumber?: string | null; claimedGuestName?: string | null },
   guestPhone: string,
-  opts: { dryRun?: boolean } = {}
+  opts: { dryRun?: boolean; pending?: GuestContext | null; message?: string } = {}
 ): Promise<BrainOutput> {
   const room = session.roomNumber ?? null;
   const kept: BrainRequest[] = [];
   const summaries: string[] = [];
+  const mentions: string[] = [];
+  let nextContext: GuestContext | null = null;
+  let touchedFood = false;
+  let touchedSpa = false;
+
   const foodRequests = output.requests.filter((r) => r.intent === "room_service" && catalog.configured.fb);
   const spaRequests = output.requests.filter((r) => r.intent === "spa" && catalog.configured.spa);
-
   for (const r of output.requests) {
     if (!foodRequests.includes(r) && !spaRequests.includes(r)) kept.push(r);
   }
 
-  if (foodRequests.length) {
-    const asks = foodRequests.flatMap((r) => asksFrom(r, "fb", catalog));
-    const { confirmed, unavailable } = resolveAsks(asks, "fb", catalog);
-    // stock is claimed item by item; anything that has just run out moves to the unavailable list
+  // a reply to a pending offer that the model did not turn into items: read it ourselves
+  const pending = opts.pending ?? null;
+  const extraAsks: Ask[] = [];
+  if (pending && opts.message) {
+    const alreadyChosen = foodRequests.concat(spaRequests).some((r) => (r.items ?? []).some((it) => pending.options.some((o) => o.code === it.id)));
+    if (!alreadyChosen) {
+      const choice = resolvePendingChoice(opts.message, pending, catalog);
+      if (choice) extraAsks.push(choice);
+    }
+  }
+
+  const pendingDept = pending?.dept ?? "fb";
+  if (foodRequests.length || (extraAsks.length && pendingDept === "fb")) {
+    touchedFood = true;
+    const asks = foodRequests.flatMap((r) => asksFrom(r, "fb", catalog)).concat(pendingDept === "fb" ? extraAsks : []);
+    const { confirmed, unavailable, ambiguous } = resolveAsks(asks, "fb", catalog);
     const placed: Confirmed[] = [];
     for (const c of confirmed) {
       if (opts.dryRun || (await takeStock(c.item, c.qty))) placed.push(c);
@@ -449,36 +628,49 @@ export async function applyCatalog(
     if (placed.length) {
       const orderId = opts.dryRun ? null : await placeOrder(hotelId, room, guestPhone, placed);
       const total = placed.reduce((s, c) => s + c.item.price * c.qty, 0);
-      const first = foodRequests[0];
+      const first = foodRequests[0] ?? { intent: "room_service" as const, detail: "", priority: "normal" as const };
       kept.push({
         ...first,
+        intent: "room_service",
         detail: "Room service order: " + placed.map((c) => c.qty + " x " + c.item.name).join(", ") + " (total " + money(total) + (orderId ? ", order " + orderId.slice(0, 8) : "") + ")",
         quantity: placed.reduce((s, c) => s + c.qty, 0),
         priority: foodRequests.some((r) => r.priority === "urgent") ? "urgent" : first.priority,
       });
     }
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "fb", room, guestPhone, unavailable);
-    summaries.push(foodSummary(room, placed, unavailable));
-    log.info("catalog: room service resolved", { placed: placed.length, unavailable: unavailable.length, phone: guestPhone });
+    summaries.push(foodSummary(room, placed, unavailable, ambiguous));
+    mentions.push(...placed.map((c) => c.item.name), ...unavailable.map((u) => u.ask), ...unavailable.flatMap((u) => u.suggestions.map((s) => s.name)));
+    nextContext = offerFrom(ambiguous, unavailable, "fb", 1);
+    log.info("catalog: room service resolved", { placed: placed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
   }
 
-  if (spaRequests.length) {
-    const asks = spaRequests.flatMap((r) => asksFrom(r, "spa", catalog));
-    const { confirmed, unavailable } = resolveAsks(asks, "spa", catalog);
+  if (spaRequests.length || (extraAsks.length && pendingDept === "spa")) {
+    touchedSpa = true;
+    const asks = spaRequests.flatMap((r) => asksFrom(r, "spa", catalog)).concat(pendingDept === "spa" ? extraAsks : []);
+    const { confirmed, unavailable, ambiguous } = resolveAsks(asks, "spa", catalog);
     if (confirmed.length) {
-      const first = spaRequests[0];
+      const first = spaRequests[0] ?? { intent: "spa" as const, detail: "", priority: "normal" as const };
       const when = spaRequests.map((r) => r.whenText).find(Boolean);
       kept.push({
         ...first,
+        intent: "spa",
         detail: "Spa: " + confirmed.map((c) => c.item.name + " (" + money(c.item.price) + (c.item.durationMin ? ", " + c.item.durationMin + " min" : "") + ")").join(", ") + (when ? " - " + when : ""),
       });
     }
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "spa", room, guestPhone, unavailable);
-    summaries.push(spaSummary(confirmed, unavailable));
-    log.info("catalog: spa resolved", { confirmed: confirmed.length, unavailable: unavailable.length, phone: guestPhone });
+    summaries.push(spaSummary(confirmed, unavailable, ambiguous));
+    mentions.push(...confirmed.map((c) => c.item.name), ...unavailable.map((u) => u.ask));
+    if (!nextContext) nextContext = offerFrom(ambiguous, unavailable, "spa", 1);
+    log.info("catalog: spa resolved", { confirmed: confirmed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
+  }
+
+  if (!opts.dryRun) {
+    if (nextContext) await saveGuestContext(hotelId, guestPhone, nextContext);
+    else if (touchedFood || touchedSpa) await clearGuestContext(hotelId, guestPhone);
   }
 
   const extra = summaries.filter(Boolean).join("\n\n");
-  const reply = extra ? output.reply.trim() + "\n\n" + extra : output.reply;
+  if (!extra) return { ...output, requests: kept };
+  const reply = opener(output.reply, mentions, session.claimedGuestName ?? null) + "\n\n" + extra;
   return { ...output, requests: kept, reply };
 }
