@@ -17,7 +17,7 @@ import type { BrainOutput, BrainRequest } from "../brain/schema";
 const RUPEE = "\u20B9";
 const MAX_SUGGESTIONS = 3;
 const STRONG_MATCH = 0.78;   // a "not on menu" ask that actually is on the menu, just spelt differently
-const WEAK_MATCH = 0.12;     // below this a suggestion is filler, not a real match
+const WEAK_MATCH = 0.3;      // below this a suggestion is filler, not a real match
 const MAX_LIST = 8;          // items shown when the guest browses a category
 const DIGEST_LIMIT = 30;     // above this, the full menu is offered by category instead of in one go
 
@@ -49,6 +49,7 @@ export type Catalog = {
   promptText: string;
   configured: Record<CatalogDept, boolean>;
   timezone: string | null;
+  now: Date;
 };
 
 /* ---------------------------------------------------------------- loading ---------- */
@@ -115,7 +116,8 @@ export async function loadCatalog(hotelId: string, timezone: string | null): Pro
     dining: items.some((i) => i.dept === "dining"),
     spa: items.some((i) => i.dept === "spa"),
   };
-  return { items, byCode, promptText: renderForPrompt(items, timezone), configured, timezone };
+  const now = new Date();
+  return { items, byCode, promptText: renderForPrompt(items, timezone, now), configured, timezone, now };
 }
 
 /* ---------------------------------------------------------------- availability ------ */
@@ -159,9 +161,9 @@ function to12h(hhmmStr: string): string {
   return hour + (m ? ":" + String(m).padStart(2, "0") : "") + " " + suffix;
 }
 
-function renderForPrompt(items: CatalogItem[], tz: string | null): string {
+function renderForPrompt(items: CatalogItem[], tz: string | null, now: Date): string {
   if (items.length === 0) return "";
-  const sections: string[] = [];
+  const sections: string[] = [describeMoment(momentOf(tz, now))];
   const block = (dept: CatalogDept, title: string, header: string) => {
     const rows = items.filter((i) => i.dept === dept);
     if (rows.length === 0) return;
@@ -240,7 +242,7 @@ function bestMatch(ask: string, candidates: CatalogItem[]): { item: CatalogItem;
 const DRINK = ["chai", "tea", "coffee", "espresso", "latte", "cappuccino", "juice", "water", "soda", "lassi", "milk", "cola", "coke", "pepsi", "sprite", "beer", "wine", "whisky", "whiskey", "cocktail", "mocktail", "shake", "smoothie", "drink", "drinks", "beverage", "beverages", "soft"];
 const CATEGORY_HINTS: { words: string[]; category: RegExp }[] = [
   { words: ["starter", "starters", "snack", "snacks", "appetizer", "appetiser", "bite", "bites", "nibbles"], category: /start|snack|appet|small/i },
-  { words: ["dessert", "desserts", "sweet", "sweets", "ice cream", "icecream", "cake", "pudding"], category: /dessert|sweet|cake|ice/i },
+  { words: ["dessert", "desserts", "sweet", "sweets", "ice cream", "icecream", "cake", "pudding", "halwa", "kheer", "gulab", "jamun", "rasgulla", "rasmalai", "kulfi", "brownie", "pastry", "mithai", "phirni", "jalebi"], category: /dessert|sweet|cake|ice/i },
   { words: ["main", "mains", "main course", "curry", "dinner", "lunch", "meal", "thali"], category: /main|curr|meal|dinner|lunch|thali/i },
   { words: ["breakfast", "morning"], category: /breakfast/i },
   { words: ["soup", "soups"], category: /soup/i },
@@ -341,10 +343,124 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
   // a category ask lists what there is in that category; a dish ask gets real lookalikes first
   if (generic || category) { take(scored); return picked; }
   take(scored.filter((s) => s.real));
-  take(scored.filter((s) => (s.item.bestseller || s.item.signature) && (!pref || dietMatches(pref, s.item))));
+  if (pref) take(scored.filter((s) => (s.item.bestseller || s.item.signature) && dietMatches(pref, s.item)));
   // a drink ask with no similar drink: offer what drinks there are, since that is what they want
   if (kind === "drink" || dept === "spa") take(scored);
   return picked;
+}
+
+/* ---------------------------------------------------------------- moment ----------- */
+
+export type DayPart = "morning" | "afternoon" | "evening" | "night" | "late";
+export type Season = "hot" | "cold" | "rainy" | "mild";
+export type Moment = { dayPart: DayPart; season: Season; hour: number; weekday: string };
+
+/** Hotel-local hour, month and weekday - what the guest is experiencing, not what the server clock says. */
+export function momentOf(tz: string | null, now: Date = new Date()): Moment {
+  let hour = now.getUTCHours(), month = now.getUTCMonth() + 1, weekday = "day";
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", month: "numeric", weekday: "long", hourCycle: "h23", timeZone: tz ?? undefined }).formatToParts(now);
+    for (const p of parts) {
+      if (p.type === "hour") hour = Number(p.value);
+      if (p.type === "month") month = Number(p.value);
+      if (p.type === "weekday") weekday = p.value;
+    }
+  } catch { /* server clock it is */ }
+  const dayPart: DayPart = hour < 5 ? "late" : hour < 11 ? "morning" : hour < 16 ? "afternoon" : hour < 20 ? "evening" : "night";
+  return { dayPart, season: seasonOf(tz, month), hour, weekday };
+}
+
+/** Rough season from the calendar; India gets its own summer / monsoon / winter split, elsewhere the hemisphere decides. */
+function seasonOf(tz: string | null, month: number): Season {
+  const z = (tz ?? "").toLowerCase();
+  if (z.includes("kolkata") || z.includes("calcutta") || z.includes("dhaka") || z.includes("karachi") || z.includes("kathmandu") || z.includes("colombo")) {
+    if (month >= 3 && month <= 6) return "hot";
+    if (month >= 7 && month <= 9) return "rainy";
+    if (month === 12 || month <= 2) return "cold";
+    return "mild";
+  }
+  const southern = /australia|sydney|melbourne|auckland|johannesburg|sao_paulo|buenos_aires|santiago|lima|nairobi/.test(z);
+  const hotMonths = southern ? [12, 1, 2] : [6, 7, 8];
+  const coldMonths = southern ? [6, 7, 8] : [12, 1, 2];
+  if (hotMonths.includes(month)) return "hot";
+  if (coldMonths.includes(month)) return "cold";
+  return "mild";
+}
+
+function describeMoment(m: Moment): string {
+  const seasonText = m.season === "hot" ? "hot season" : m.season === "cold" ? "cold season" : m.season === "rainy" ? "monsoon, rainy" : "mild weather";
+  return "NOW AT THE HOTEL: " + m.weekday + " " + m.dayPart + " (" + String(m.hour).padStart(2, "0") + ":00 local), " + seasonText + ". Let this shape what you suggest - cool things in the heat, warm things in the cold, breakfast in the morning.";
+}
+
+const COOL_WORDS = ["cold", "iced", "ice", "chilled", "lemon", "lemonade", "lime", "nimbu", "shikanji", "lassi", "juice", "shake", "milkshake", "mocktail", "soda", "cola", "smoothie", "kulfi", "cream", "sorbet", "salad", "raita", "buttermilk", "chaas", "chaach", "coconut", "watermelon", "mojito", "cooler", "sherbet", "sharbat", "frappe"];
+const WARM_WORDS = ["hot", "soup", "chai", "tea", "coffee", "kadha", "kaadha", "warm", "halwa", "stew", "cocoa", "chocolate", "kheer", "broth", "pakora", "pakoda", "bhaji", "bhajiya", "samosa", "fritter", "maggi", "toast", "latte", "cappuccino", "espresso", "kahwa", "kesar"];
+const RAINY_WORDS = ["pakora", "pakoda", "bhaji", "bhajiya", "samosa", "fritter", "chai", "tea", "maggi", "soup", "corn", "vada", "kachori", "coffee"];
+const BREAKFAST_WORDS = ["omelette", "omelet", "egg", "eggs", "paratha", "poha", "upma", "idli", "dosa", "toast", "pancake", "pancakes", "cereal", "muesli", "porridge", "juice", "coffee", "tea", "chai", "croissant", "sandwich", "waffle", "uttapam", "chole", "bhature", "puri", "aloo"];
+const DESSERT_WORDS = ["gulab", "jamun", "kheer", "halwa", "cream", "kulfi", "brownie", "cake", "pastry", "rasgulla", "rasmalai", "sandesh", "mousse", "pudding", "tart", "phirni", "jalebi", "malpua", "sundae"];
+
+function hasWord(item: CatalogItem, words: string[]): boolean {
+  const text = " " + normalise(item.name + " " + (item.category ?? "")) + " ";
+  return words.some((w) => text.includes(" " + w + " "));
+}
+function isDessert(item: CatalogItem): boolean {
+  return !!(item.category && /dessert|sweet/i.test(item.category)) || hasWord(item, DESSERT_WORDS);
+}
+function isBreakfast(item: CatalogItem): boolean {
+  return !!(item.category && /breakfast/i.test(item.category)) || hasWord(item, BREAKFAST_WORDS);
+}
+
+export type Pick = { item: CatalogItem; score: number; reason: string };
+
+/** How well an item suits this moment, with the reason a concierge would give for it. */
+function affinity(item: CatalogItem, m: Moment, history: Map<string, number>): Pick {
+  const reasons: { score: number; text: string }[] = [];
+  const cool = hasWord(item, COOL_WORDS), warm = hasWord(item, WARM_WORDS), rainy = hasWord(item, RAINY_WORDS);
+  const drink = kindOf(item) === "drink";
+  const hits = history.get(item.id) ?? 0;
+
+  if (m.season === "hot" && cool) reasons.push({ score: 3, text: m.dayPart === "afternoon" ? "perfect for this afternoon heat" : "perfect for this heat" });
+  if (m.season === "hot" && warm && !(drink && m.dayPart === "morning")) reasons.push({ score: -1.5, text: "" });
+  if (m.season === "cold" && warm) reasons.push({ score: 3, text: m.dayPart === "night" || m.dayPart === "evening" ? "just right for a cold evening" : "warming on a cold day" });
+  if (m.season === "cold" && cool) reasons.push({ score: -1.5, text: "" });
+  if (m.season === "rainy" && rainy) reasons.push({ score: 2.5, text: "made for a rainy day" });
+  if (m.dayPart === "morning" && isBreakfast(item)) reasons.push({ score: 2.5, text: "a good way to start the morning" });
+  if (m.dayPart !== "morning" && isBreakfast(item) && !drink) reasons.push({ score: -1, text: "" });
+  if ((m.dayPart === "night" || m.dayPart === "evening") && isDessert(item)) reasons.push({ score: 2, text: "a sweet finish to the evening" });
+  if (m.dayPart === "late" && (item.category && /snack|start|light|soup/i.test(item.category))) reasons.push({ score: 1.5, text: "something light for a late night" });
+  if (hits > 0) reasons.push({ score: 2 + Math.min(hits, 3) * 0.5, text: hits > 1 ? "your usual" : "you enjoyed this before" });
+  if (item.bestseller) reasons.push({ score: 1, text: "our bestseller" });
+  if (item.signature) reasons.push({ score: 1, text: "the chef's signature" });
+
+  const score = reasons.reduce((s, r) => s + r.score, 0);
+  const strong = reasons.filter((r) => r.text && r.score >= 2).sort((a, b) => b.score - a.score);
+  const reason = strong.length >= 2 ? strong[0].text + ", and " + strong[1].text : strong[0]?.text ?? reasons.filter((r) => r.text).sort((a, b) => b.score - a.score)[0]?.text ?? "";
+  return { item, score, reason };
+}
+
+/** The best things to put in front of this guest right now, from the available menu. */
+export function picksFor(catalog: Catalog, dept: CatalogDept, history: Map<string, number>, opts: { exclude?: Set<string>; kind?: "drink" | "food" | null; limit?: number; minScore?: number } = {}): Pick[] {
+  const m = momentOf(catalog.timezone, catalog.now);
+  const pool = catalog.items.filter((i) => i.dept === dept && availability(i, catalog.timezone).ok && !(opts.exclude?.has(i.id)) && (!opts.kind || kindOf(i) === opts.kind));
+  return pool.map((i) => affinity(i, m, history))
+    .filter((p) => p.reason && p.score >= (opts.minScore ?? 1.5))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, opts.limit ?? 2);
+}
+
+/** What this guest has ordered here before: item id -> times. */
+export async function loadGuestHistory(hotelId: string, guestPhone: string): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `select oi.menu_item_id as id, count(*)::int as n from order_items oi join orders o on o.id = oi.order_id
+        where o.hotel_id = $1 and o.guest_phone = $2 and oi.menu_item_id is not null and o.status <> 'cancelled' group by oi.menu_item_id`, hotelId, guestPhone);
+    for (const r of rows) if (r.id) map.set(String(r.id), num(r.n));
+  } catch { /* no history is fine */ }
+  return map;
+}
+
+function pickLine(p: Pick, dept: CatalogDept): string {
+  return itemLabel(p.item, dept) + (p.reason ? " - " + p.reason : "");
 }
 
 /* ---------------------------------------------------------------- browsing --------- */
@@ -385,6 +501,10 @@ function browseCategory(ask: string, dept: CatalogDept, catalog: Catalog): { lab
   return { label: best.label, items };
 }
 
+function capitalise(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
 function joinNatural(parts: string[]): string {
   if (parts.length <= 1) return parts.join("");
   return parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
@@ -399,7 +519,7 @@ function guideText(catalog: Catalog, dept: CatalogDept): string {
 }
 
 /** The menu itself, composed by the server: grouped by category with prices, or by category headings when it is long. */
-export function menuDigest(catalog: Catalog, dept: CatalogDept): string {
+export function menuDigest(catalog: Catalog, dept: CatalogDept, history: Map<string, number> = new Map()): string {
   const items = catalog.items.filter((i) => i.dept === dept && availability(i, catalog.timezone).ok);
   if (items.length === 0) return dept === "spa" ? "Our spa list is not published yet - the team can tell you what is on today." : "Our in-room menu is not published yet - the team can tell you what is on today.";
   const cats = categoriesOf(catalog, dept);
@@ -409,6 +529,8 @@ export function menuDigest(catalog: Catalog, dept: CatalogDept): string {
     return title + " " + joinNatural(heads) + ". Which would you like to see?";
   }
   const lines: string[] = [title];
+  const picks = dept === "spa" ? [] : picksFor(catalog, dept, history, { limit: 2, minScore: 2 });
+  if (picks.length) lines.push("Right now we would suggest: " + picks.map((p) => pickLine(p, dept)).join("; ") + ".");
   const line = (list: CatalogItem[]) => list.map((i) => itemLabel(i, dept)).join(", ");
   for (const c of cats) {
     const list = items.filter((i) => i.category === c);
@@ -780,6 +902,7 @@ export async function applyCatalog(
   let touchedSpa = false;
   let ordered = false;
   let deadEnd: CatalogDept | null = null;
+  const placedItems: CatalogItem[] = [];
 
   const foodRequests = output.requests.filter((r) => r.intent === "room_service" && catalog.configured.fb);
   const spaRequests = output.requests.filter((r) => r.intent === "spa" && catalog.configured.spa);
@@ -810,6 +933,7 @@ export async function applyCatalog(
     }
     if (placed.length) {
       ordered = true;
+      placedItems.push(...placed.map((c) => c.item));
       const orderId = opts.dryRun ? null : await placeOrder(hotelId, room, guestPhone, placed);
       const total = placed.reduce((s, c) => s + c.item.price * c.qty, 0);
       const first = foodRequests[0] ?? { intent: "room_service" as const, detail: "", priority: "normal" as const };
@@ -851,16 +975,39 @@ export async function applyCatalog(
     log.info("catalog: spa resolved", { confirmed: confirmed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
   }
 
+  const declined = !!(pending && opts.message && NO.some((n) => normalise(opts.message!) === n));
+  const history = catalog.configured.fb && (ordered || deadEnd || output.showMenu || (opts.message && isMenuQuestion(opts.message)))
+    ? await loadGuestHistory(hotelId, guestPhone) : new Map<string, number>();
+
   // the menu itself, when asked for - by the model's flag or by the words
   const menuDept: CatalogDept | null = output.showMenu
     ? (output.showMenu === "spa" ? (catalog.configured.spa ? "spa" : null) : (catalog.configured.fb ? "fb" : null))
     : (opts.message && isMenuQuestion(opts.message) ? menuDeptFor(opts.message, catalog) : null);
-  if (menuDept && !ordered) summaries.push(menuDigest(catalog, menuDept));
+  if (menuDept && !ordered) summaries.push(menuDigest(catalog, menuDept, history));
 
-  // a dead end gets a next step: what the hotel does have, as a question
-  if (!ordered && !menuDept && deadEnd) summaries.push(guideText(catalog, deadEnd));
+  // a dead end gets a next step: something that suits the moment, then what the hotel does have
+  if (!ordered && !menuDept && deadEnd) {
+    const pick = deadEnd === "fb" ? picksFor(catalog, "fb", history, { limit: 1, minScore: 2 })[0] : undefined;
+    if (pick) {
+      summaries.push("You might enjoy " + pickLine(pick, "fb") + ". Shall I send one up, or would you like to see the menu?");
+      nextContext = { kind: "choose", dept: "fb", ask: "something else", qty: 1, options: [{ code: pick.item.code, name: pick.item.name, price: pick.item.price }] };
+    } else {
+      summaries.push(guideText(catalog, deadEnd));
+    }
+  }
 
-  const declined = !!(pending && opts.message && NO.some((n) => normalise(opts.message!) === n));
+  // one gentle suggestion with a fresh order: a drink that suits the moment, or a dessert in the evening
+  if (ordered && touchedFood && !nextContext && !extraAsks.length && !declined) {
+    const m = momentOf(catalog.timezone, catalog.now);
+    const has = (test: (i: CatalogItem) => boolean) => placedItems.some((i) => test(i));
+    let pick: Pick | undefined;
+    if (!has((i) => kindOf(i) === "drink")) pick = picksFor(catalog, "fb", history, { kind: "drink", limit: 1, minScore: 2, exclude: new Set(placedItems.map((i) => i.id)) })[0];
+    if (!pick && (m.dayPart === "night" || m.dayPart === "evening") && !has(isDessert)) pick = picksFor(catalog, "fb", history, { limit: 1, minScore: 2, exclude: new Set(placedItems.map((i) => i.id)) }).filter((p) => isDessert(p.item))[0];
+    if (pick) {
+      summaries.push("Would you like " + itemLabel(pick.item, "fb") + " with that? " + capitalise(pick.reason) + ".");
+      nextContext = { kind: "choose", dept: "fb", ask: "with your order", qty: 1, options: [{ code: pick.item.code, name: pick.item.name, price: pick.item.price }] };
+    }
+  }
   if (!opts.dryRun) {
     if (nextContext) await saveGuestContext(hotelId, guestPhone, nextContext);
     else if (touchedFood || touchedSpa || declined) await clearGuestContext(hotelId, guestPhone);
@@ -871,6 +1018,8 @@ export async function applyCatalog(
     const dangling = /\b(below|details)\b/i.test(output.reply);
     return dangling ? { ...output, requests: kept, reply: output.reply.replace(/[^.!?]*\b(below|details)\b[^.!?]*[.!?]?/gi, "").trim() || "How can I help?" } : { ...output, requests: kept };
   }
-  const head = opener(output.reply, mentions, session.claimedGuestName ?? null, ordered);
+  let head = opener(output.reply, mentions, session.claimedGuestName ?? null, ordered);
+  // a bare apology on top of the server's own apology reads doubled
+  if (head && /^(so )?sorry[.!]*$|^apologies[.!]*$/i.test(head.trim()) && /^sorry/i.test(extra)) head = null;
   return { ...output, requests: kept, reply: head ? head + "\n\n" + extra : extra };
 }
