@@ -285,6 +285,12 @@ function inferCategory(ask: string): RegExp | null {
   for (const h of CATEGORY_HINTS) if (h.words.some((w) => a.includes(" " + w + " "))) return h.category;
   return null;
 }
+/** The category word the guest used, pluralised the way a menu would: "chicken soup" -> soups. */
+function categoryLabel(ask: string): string | null {
+  const a = " " + normalise(ask) + " ";
+  for (const h of CATEGORY_HINTS) for (const w of h.words) if (a.includes(" " + w + " ")) return LABELS[w] ?? (w.endsWith("s") ? w : w + "s");
+  return null;
+}
 
 /**
  * Up to three alternatives for something we cannot serve - and only things that are actually
@@ -301,8 +307,11 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
   // an anchor that disagrees with the words is a coincidence of spelling, not a clue
   const anchor = anchorIn && (dept === "spa" || kindOf(anchorIn) === kind) ? anchorIn : null;
   const category = inferCategory(ask);
-  const pool = catalog.items.filter((i) => i.dept === dept && !exclude.has(i.id) && availability(i, catalog.timezone).ok && (!kind || kindOf(i) === kind)
-    && (!category || (i.category != null && category.test(i.category))) && (!generic || !pref || dietMatches(pref, i)));
+  const basePool = catalog.items.filter((i) => i.dept === dept && !exclude.has(i.id) && availability(i, catalog.timezone).ok && (!kind || kindOf(i) === kind) && (!generic || !pref || dietMatches(pref, i)));
+  let pool = category ? basePool.filter((i) => i.category != null && category.test(i.category)) : basePool;
+  // nothing in the category they named: offer what matches their diet instead, and say so
+  const categoryFallback = !!category && pool.length === 0;
+  if (categoryFallback) pool = basePool;
   const scored = pool.map((item) => {
     const sim = similarity(ask, item.name);
     let score = sim;
@@ -324,6 +333,8 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
       if (!picked.some((p) => p.id === s.item.id)) picked.push(s.item);
     }
   };
+  // an empty category: only things linked by diet are worth offering ("chicken soup" -> the chicken dishes)
+  if (categoryFallback) { if (pref) take(scored.filter((s) => dietMatches(pref, s.item))); return picked; }
   // a category ask lists what there is in that category; a dish ask gets real lookalikes first
   if (generic || category) { take(scored); return picked; }
   take(scored.filter((s) => s.real));
@@ -585,8 +596,12 @@ function itemLabel(i: CatalogItem, dept: CatalogDept): string {
 /** The sentence for something we cannot serve: what, why, and what we have instead. */
 function unavailableText(u: Unavailable, dept: CatalogDept): string {
   const parts = u.suggestions.map((i) => itemLabel(i, dept));
+  const cat = dept === "spa" ? null : inferCategory(u.ask);
+  const catLabel = cat ? categoryLabel(u.ask) : null;
+  const fallback = !!cat && parts.length > 0 && !u.suggestions.some((i) => i.category != null && cat.test(i.category));
   if (u.generic) {
     if (parts.length === 0) return "We do not have " + askLabel(u.ask) + " on the menu right now.";
+    if (fallback) return "We do not have " + (catLabel ?? askLabel(u.ask)) + " on the menu right now. You might like: " + parts.join(", ") + ".";
     return "For " + askLabel(u.ask) + ", here is what we have: " + parts.join(", ") + ". Just tell me which you would like.";
   }
   const name = u.item ? u.item.name : u.ask;
@@ -594,6 +609,8 @@ function unavailableText(u: Unavailable, dept: CatalogDept): string {
   if (u.reason === "sold_out") why = name + " is sold out today.";
   else if (u.reason === "not_served_now" && u.item?.servedFrom && u.item?.servedTo) why = name + " is served " + to12h(u.item.servedFrom) + " to " + to12h(u.item.servedTo) + ".";
   else why = "Sorry, " + name + " is not on our menu.";
+  if (fallback && catLabel) return why.replace(/\.$/, "") + " and we have no " + catLabel + " right now. You might like: " + parts.join(", ") + ".";
+  if (parts.length === 0 && catLabel) return why.replace(/\.$/, "") + " and we have no " + catLabel + " right now.";
   if (parts.length === 0) return why + " We do not have anything similar right now.";
   if (parts.length === 1) return why + " Closest we have: " + parts[0] + ". Would you like that instead?";
   return why + " Closest we have: " + parts.join(", ") + ". Just tell me which you would like.";
