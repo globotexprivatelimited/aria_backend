@@ -28,6 +28,7 @@ export const BrainOutput = z.object({
   reply: z.string().min(1).max(900),
   sentiment: z.enum(["happy", "neutral", "unhappy"]).default("neutral"),
   needsHuman: z.boolean().default(false),
+  showMenu: z.preprocess((v) => (v === "fb" || v === "spa" ? v : v === "all" || v === true ? "fb" : undefined), z.enum(["fb", "spa"]).optional()),
 });
 
 export type BrainRequest = z.infer<typeof BrainRequest>;

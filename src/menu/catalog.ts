@@ -18,6 +18,8 @@ const RUPEE = "\u20B9";
 const MAX_SUGGESTIONS = 3;
 const STRONG_MATCH = 0.78;   // a "not on menu" ask that actually is on the menu, just spelt differently
 const WEAK_MATCH = 0.12;     // below this a suggestion is filler, not a real match
+const MAX_LIST = 8;          // items shown when the guest browses a category
+const DIGEST_LIMIT = 30;     // above this, the full menu is offered by category instead of in one go
 
 export type CatalogDept = "fb" | "dining" | "spa";
 
@@ -327,9 +329,10 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
   });
   scored.sort((a, b) => b.score - a.score);
   const picked: CatalogItem[] = [];
+  const cap = generic && category ? MAX_LIST : MAX_SUGGESTIONS;
   const take = (list: typeof scored) => {
     for (const s of list) {
-      if (picked.length >= MAX_SUGGESTIONS) break;
+      if (picked.length >= cap) break;
       if (!picked.some((p) => p.id === s.item.id)) picked.push(s.item);
     }
   };
@@ -342,6 +345,79 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
   // a drink ask with no similar drink: offer what drinks there are, since that is what they want
   if (kind === "drink" || dept === "spa") take(scored);
   return picked;
+}
+
+/* ---------------------------------------------------------------- browsing --------- */
+
+const MENU_WORDS = ["menu", "have", "having", "offer", "offering", "available", "availability", "options", "option", "there", "what", "whats", "s", "all", "show", "list", "see", "tell", "dikhao", "hai", "kya", "kuch", "everything", "serve", "serving", "sell", "got", "food", "eat", "items", "dishes", "choices", "today", "tonight", "now", "on", "in", "is", "are", "u", "ur", "r", "your", "ya", "hey", "hi", "hello", "aria", "room", "service", "dining", "card"];
+const MENU_SIGNAL = ["menu", "have", "having", "offer", "offering", "available", "availability", "options", "option", "dikhao", "hai", "serve", "serving", "got", "list", "show", "choices", "items", "dishes", "card"];
+const SPA_WORDS = ["spa", "massage", "treatment", "treatments", "facial", "therapy", "wellness", "salon"];
+
+/** "what do you have?", "menu please", "kya kya hai" - a request to see the menu, with no dish or category named. */
+export function isMenuQuestion(message: string): boolean {
+  const raw = normalise(message).split(" ").filter(Boolean);
+  if (raw.length === 0) return false;
+  const signal = raw.some((w) => MENU_SIGNAL.includes(w));
+  const rest = raw.filter((w) => !FILLER.includes(w) && !MENU_WORDS.includes(w) && !SPA_WORDS.includes(w));
+  return signal && rest.length === 0;
+}
+export function menuDeptFor(message: string, catalog: Catalog): CatalogDept | null {
+  const a = " " + normalise(message) + " ";
+  if (SPA_WORDS.some((w) => a.includes(" " + w + " "))) return catalog.configured.spa ? "spa" : null;
+  return catalog.configured.fb ? "fb" : catalog.configured.spa ? "spa" : null;
+}
+
+function categoriesOf(catalog: Catalog, dept: CatalogDept): string[] {
+  const seen: string[] = [];
+  for (const i of catalog.items) if (i.dept === dept && i.category && !seen.includes(i.category)) seen.push(i.category);
+  return seen;
+}
+
+/** A guest naming one of the hotel's own categories ("tandoor", "beverages") wants to see it, not to be told it is not a dish. */
+function browseCategory(ask: string, dept: CatalogDept, catalog: Catalog): { label: string; items: CatalogItem[] } | null {
+  let best: { label: string; score: number } | null = null;
+  for (const c of categoriesOf(catalog, dept)) {
+    const s = similarity(ask, c);
+    if (!best || s > best.score) best = { label: c, score: s };
+  }
+  if (!best || best.score < 0.6) return null;
+  const items = catalog.items.filter((i) => i.dept === dept && i.category === best!.label && availability(i, catalog.timezone).ok).slice(0, MAX_LIST);
+  return { label: best.label, items };
+}
+
+function joinNatural(parts: string[]): string {
+  if (parts.length <= 1) return parts.join("");
+  return parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
+}
+
+/** The next step after a dead end: what the hotel does have, as a question the guest can answer in a word. */
+function guideText(catalog: Catalog, dept: CatalogDept): string {
+  const cats = categoriesOf(catalog, dept);
+  if (dept === "spa") return "Would you like to see our spa services instead? Just say spa menu.";
+  if (cats.length === 0) return "Would you like something else? Just ask for the menu and I will send it over.";
+  return "Would you like something else? We have " + joinNatural(cats.slice(0, 6)) + " - just say which, or ask for the full menu.";
+}
+
+/** The menu itself, composed by the server: grouped by category with prices, or by category headings when it is long. */
+export function menuDigest(catalog: Catalog, dept: CatalogDept): string {
+  const items = catalog.items.filter((i) => i.dept === dept && availability(i, catalog.timezone).ok);
+  if (items.length === 0) return dept === "spa" ? "Our spa list is not published yet - the team can tell you what is on today." : "Our in-room menu is not published yet - the team can tell you what is on today.";
+  const cats = categoriesOf(catalog, dept);
+  const title = dept === "spa" ? "Our spa services:" : dept === "dining" ? "Our restaurant menu:" : "Our in-room dining menu:";
+  if (items.length > DIGEST_LIMIT && cats.length > 1) {
+    const heads = cats.map((c) => c + " (" + items.filter((i) => i.category === c).length + ")");
+    return title + " " + joinNatural(heads) + ". Which would you like to see?";
+  }
+  const lines: string[] = [title];
+  const line = (list: CatalogItem[]) => list.map((i) => itemLabel(i, dept)).join(", ");
+  for (const c of cats) {
+    const list = items.filter((i) => i.category === c);
+    if (list.length) lines.push(c + ": " + line(list));
+  }
+  const uncategorised = items.filter((i) => !i.category);
+  if (uncategorised.length) lines.push((cats.length ? "Also: " : "") + line(uncategorised));
+  lines.push(dept === "spa" ? "Tell me which treatment and a time that suits you." : "Just tell me what you would like, and how many.");
+  return lines.join("\n");
 }
 
 /* ---------------------------------------------------------------- memory ----------- */
@@ -475,6 +551,10 @@ const NO = ["no", "nah", "nope", "cancel", "nahi", "nai", "na", "not now", "no t
  * sees the offer and the thread.
  */
 export function fastPath(message: string, pending: GuestContext | null, catalog: Catalog): BrainOutput | null {
+  if (isMenuQuestion(message)) {
+    const dept = menuDeptFor(message, catalog);
+    if (dept) return { requests: [], reply: "Of course.", showMenu: dept === "dining" ? "fb" : dept, sentiment: "neutral", needsHuman: false };
+  }
   if (!pending) return null;
   const words = normalise(message).split(" ").filter(Boolean);
   if (words.length === 0 || words.length > 6) return null;
@@ -493,7 +573,7 @@ export function fastPath(message: string, pending: GuestContext | null, catalog:
 
 type Ask = { text: string; qty: number; code?: string };
 type Confirmed = { item: CatalogItem; qty: number };
-type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[]; generic?: boolean };
+type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[]; generic?: boolean; browse?: boolean };
 type Ambiguous = { ask: string; qty: number; options: CatalogItem[] };
 const AMBIGUITY_GAP = 0.1;
 
@@ -533,6 +613,11 @@ function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confir
       }
     }
     if (!item) {
+      const browse = browseCategory(ask.text, dept, catalog);
+      if (browse) {
+        unavailable.push({ ask: browse.label, item: null, reason: "not_on_menu", suggestions: browse.items, generic: true, browse: true });
+        continue;
+      }
       const near = bestMatch(ask.text, pool);
       const anchor = near && near.score >= ANCHOR_MATCH ? near.item : null;
       unavailable.push({ ask: ask.text, item: null, reason: "not_on_menu", suggestions: suggest(ask.text, dept, catalog, new Set(), anchor), generic: dept !== "spa" && isGenericAsk(ask.text) });
@@ -599,6 +684,10 @@ function unavailableText(u: Unavailable, dept: CatalogDept): string {
   const cat = dept === "spa" ? null : inferCategory(u.ask);
   const catLabel = cat ? categoryLabel(u.ask) : null;
   const fallback = !!cat && parts.length > 0 && !u.suggestions.some((i) => i.category != null && cat.test(i.category));
+  if (u.browse) {
+    if (parts.length === 0) return "Nothing in " + u.ask + " is available right now.";
+    return u.ask + ": " + parts.join(", ") + ". Just tell me what you would like, and how many.";
+  }
   if (u.generic) {
     if (parts.length === 0) return "We do not have " + askLabel(u.ask) + " on the menu right now.";
     if (fallback) return "We do not have " + (catLabel ?? askLabel(u.ask)) + " on the menu right now. You might like: " + parts.join(", ") + ".";
@@ -690,6 +779,7 @@ export async function applyCatalog(
   let touchedFood = false;
   let touchedSpa = false;
   let ordered = false;
+  let deadEnd: CatalogDept | null = null;
 
   const foodRequests = output.requests.filter((r) => r.intent === "room_service" && catalog.configured.fb);
   const spaRequests = output.requests.filter((r) => r.intent === "spa" && catalog.configured.spa);
@@ -733,6 +823,7 @@ export async function applyCatalog(
     }
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "fb", room, guestPhone, unavailable);
     summaries.push(foodSummary(room, placed, unavailable, ambiguous));
+    if (!placed.length && !ambiguous.length && unavailable.length && unavailable.every((u) => u.suggestions.length === 0)) deadEnd = "fb";
     mentions.push(...placed.map((c) => c.item.name), ...unavailable.map((u) => u.ask), ...unavailable.flatMap((u) => u.suggestions.map((s) => s.name)));
     nextContext = offerFrom(ambiguous, unavailable, "fb", 1);
     log.info("catalog: room service resolved", { placed: placed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
@@ -754,10 +845,20 @@ export async function applyCatalog(
     }
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "spa", room, guestPhone, unavailable);
     summaries.push(spaSummary(confirmed, unavailable, ambiguous));
+    if (!confirmed.length && !ambiguous.length && unavailable.length && unavailable.every((u) => u.suggestions.length === 0)) deadEnd = "spa";
     mentions.push(...confirmed.map((c) => c.item.name), ...unavailable.map((u) => u.ask));
     if (!nextContext) nextContext = offerFrom(ambiguous, unavailable, "spa", 1);
     log.info("catalog: spa resolved", { confirmed: confirmed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
   }
+
+  // the menu itself, when asked for - by the model's flag or by the words
+  const menuDept: CatalogDept | null = output.showMenu
+    ? (output.showMenu === "spa" ? (catalog.configured.spa ? "spa" : null) : (catalog.configured.fb ? "fb" : null))
+    : (opts.message && isMenuQuestion(opts.message) ? menuDeptFor(opts.message, catalog) : null);
+  if (menuDept && !ordered) summaries.push(menuDigest(catalog, menuDept));
+
+  // a dead end gets a next step: what the hotel does have, as a question
+  if (!ordered && !menuDept && deadEnd) summaries.push(guideText(catalog, deadEnd));
 
   const declined = !!(pending && opts.message && NO.some((n) => normalise(opts.message!) === n));
   if (!opts.dryRun) {
@@ -766,7 +867,10 @@ export async function applyCatalog(
   }
 
   const extra = summaries.filter(Boolean).join("\n\n");
-  if (!extra) return { ...output, requests: kept };
+  if (!extra) {
+    const dangling = /\b(below|details)\b/i.test(output.reply);
+    return dangling ? { ...output, requests: kept, reply: output.reply.replace(/[^.!?]*\b(below|details)\b[^.!?]*[.!?]?/gi, "").trim() || "How can I help?" } : { ...output, requests: kept };
+  }
   const head = opener(output.reply, mentions, session.claimedGuestName ?? null, ordered);
   return { ...output, requests: kept, reply: head ? head + "\n\n" + extra : extra };
 }

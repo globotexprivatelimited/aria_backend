@@ -49,6 +49,7 @@ function menuSection(catalogText?: string): string[] {
     "c. Match loosely on spelling and language: mutton tika means Mutton Tikka; chai means Masala Chai if that is the only chai listed; a Hindi or Bengali dish name matches its menu entry.",
     "d. In reply, do NOT name any dish, item, price or availability - the system appends the exact order summary and alternatives below your words. Write one or two warm sentences only, for example acknowledging the order and saying the details follow.",
     "e. Never suggest or describe a dish that is not on this menu.",
+    "f. If the guest asks what is available, what you have, for the menu, or for options, set showMenu to fb (or spa for treatments), leave requests empty for that, and keep reply to one short sentence - the system sends the menu. A category on its own (starters, drinks, desserts) goes in notOnMenu exactly as written and the system lists it. Never write the menu yourself, and never say details are below unless you set showMenu or filled items or notOnMenu.",
   ];
 }
 
@@ -75,6 +76,7 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     '    { "intent": "...", "detail": "...", "priority": "normal", "quantity": 2, "whenText": "tonight at 8"' + (catalogText ? ', "items": [{ "id": "F3", "name": "Chicken Tikka", "qty": 2 }], "notOnMenu": ["mutton tikka"]' : "") + ' }',
     '  ],',
     '  "reply": "your message to the guest",',
+    '  "showMenu": null,',
     '  "sentiment": "happy" | "neutral" | "unhappy",',
     '  "needsHuman": false',
     '}',
