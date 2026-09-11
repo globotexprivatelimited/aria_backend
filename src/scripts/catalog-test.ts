@@ -25,7 +25,7 @@ async function main() {
     { roomNumber: "104", claimedGuestName: "Test Guest", roomVerified: true }
   );
   console.log("--- BRAIN OUTPUT" + (usedFallback ? " (FALLBACK - check ANTHROPIC_API_KEY)" : "") + " ---\n" + JSON.stringify(output, null, 2) + "\n");
-  const final = await applyCatalog(output, catalog, hotelId, { roomNumber: "104" }, "+910000000000", { dryRun: true });
+  const final = await applyCatalog(output, catalog, hotelId, { roomNumber: "104" }, "+910000000000", { dryRun: true, message: text, deptModes });
   console.log("--- REPLY THE GUEST WOULD RECEIVE ---\n" + final.reply + "\n");
   console.log("--- REQUESTS THAT WOULD BE FILED ---\n" + JSON.stringify(final.requests, null, 2));
 }

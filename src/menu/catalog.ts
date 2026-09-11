@@ -2,6 +2,7 @@ import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { recordMissedDemand } from "../misseddemand/service";
 import type { BrainOutput, BrainRequest } from "../brain/schema";
+import { getAvailability, bookSlot } from "../slots/service";
 
 /**
  * The hotel's live catalog - in-room dining menu, restaurant menu and spa services -
@@ -21,7 +22,7 @@ const WEAK_MATCH = 0.3;      // below this a suggestion is filler, not a real ma
 const MAX_LIST = 8;          // items shown when the guest browses a category
 const DIGEST_LIMIT = 30;     // above this, the full menu is offered by category instead of in one go
 
-export type CatalogDept = "fb" | "dining" | "spa";
+export type CatalogDept = "fb" | "dining" | "spa" | "housekeeping" | "front_desk" | "maintenance";
 
 export type CatalogItem = {
   id: string;
@@ -30,6 +31,11 @@ export type CatalogItem = {
   name: string;
   category: string | null;
   kind: string | null;
+  description: string | null;
+  urgency: string | null;
+  seats: number;
+  unit: string | null;
+  responseMins: number;
   diet: string | null;
   price: number;
   stock: number;          // 0 means not tracked
@@ -43,9 +49,15 @@ export type CatalogItem = {
   servedTo: string | null;
 };
 
+export type CatalogSlot = {
+  id: string; dept: CatalogDept; itemId: string | null; label: string; startTime: string; endTime: string | null;
+  capacity: number; days: string[]; active: boolean;
+};
+
 export type Catalog = {
   items: CatalogItem[];
   byCode: Map<string, CatalogItem>;
+  slots: CatalogSlot[];
   promptText: string;
   configured: Record<CatalogDept, boolean>;
   timezone: string | null;
@@ -69,25 +81,29 @@ function hhmm(v: unknown): string | null {
   return s ? s.slice(0, 5) : null;
 }
 
+const DEPT_PREFIX: Record<string, string> = { "fb": "F", "dining:menu": "D", "dining:table": "T", "dining:sitting": "G", "spa": "S", "housekeeping": "H", "front_desk": "K", "maintenance": "M" };
+const DEPT_ITEM_DEPTS = ["spa", "dining", "housekeeping", "front_desk", "maintenance"];
+
 export async function loadCatalog(hotelId: string, timezone: string | null): Promise<Catalog> {
   const items: CatalogItem[] = [];
-  const counters: Record<CatalogDept, number> = { fb: 0, dining: 0, spa: 0 };
-  const prefix: Record<CatalogDept, string> = { fb: "F", dining: "D", spa: "S" };
-  const nextCode = (dept: CatalogDept) => prefix[dept] + String(++counters[dept]);
+  const counters: Record<string, number> = {};
+  const nextCode = (key: string) => (DEPT_PREFIX[key] ?? "X") + String((counters[key] = (counters[key] ?? 0) + 1));
+  const base = (dept: CatalogDept, r: any, code: string): CatalogItem => ({
+    id: String(r.id), code, dept, name: String(r.name).trim(), category: str(r.category), kind: str(r.kind),
+    description: str(r.description), urgency: str(r.urgency), seats: num(r.seats), unit: str(r.unit), responseMins: 0,
+    diet: str(r.diet), price: num(r.price), stock: num(r.stock), available: r.available !== false,
+    prepMins: num(r.prep_mins), durationMin: num(r.duration_min), signature: !!r.is_signature, bestseller: !!r.is_bestseller,
+    ageRestricted: !!r.age_restricted, servedFrom: hhmm(r.available_from ?? r.time_from), servedTo: hhmm(r.available_to ?? r.time_to),
+  });
 
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(
-      `select id, dept, name, category, kind, diet, price, stock, available, prep_mins, is_signature, is_bestseller, age_restricted, available_from, available_to
+      `select id, dept, name, category, kind, diet, price, stock, available, prep_mins, is_signature, is_bestseller, age_restricted, available_from, available_to, description
          from menu_items where hotel_id = $1 and dept in ('fb', 'dining')
         order by dept, category asc nulls last, sort_order asc, name asc`, hotelId);
     for (const r of rows) {
       const dept = (r.dept === "dining" ? "dining" : "fb") as CatalogDept;
-      items.push({
-        id: String(r.id), code: nextCode(dept), dept, name: String(r.name).trim(), category: str(r.category), kind: str(r.kind),
-        diet: str(r.diet), price: num(r.price), stock: num(r.stock), available: r.available !== false,
-        prepMins: num(r.prep_mins), durationMin: 0, signature: !!r.is_signature, bestseller: !!r.is_bestseller,
-        ageRestricted: !!r.age_restricted, servedFrom: hhmm(r.available_from), servedTo: hhmm(r.available_to),
-      });
+      items.push(base(dept, { ...r, kind: dept === "dining" ? "menu" : r.kind }, nextCode(dept === "dining" ? "dining:menu" : "fb")));
     }
   } catch (e) {
     log.warn("catalog: menu_items unavailable", { detail: e instanceof Error ? e.message : String(e) });
@@ -95,29 +111,38 @@ export async function loadCatalog(hotelId: string, timezone: string | null): Pro
 
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(
-      `select id, name, category, kind, price, stock, available, duration_min, is_signature, time_from, time_to
-         from dept_items where hotel_id = $1 and dept = 'spa'
-        order by sort_order asc, name asc`, hotelId);
+      `select id, dept, kind, name, description, category, urgency, seats, unit, price, stock, available, duration_min, prep_mins, is_signature, time_from, time_to, diet
+         from dept_items where hotel_id = $1 and dept = any($2)
+        order by dept, kind, sort_order asc, name asc`, hotelId, DEPT_ITEM_DEPTS);
     for (const r of rows) {
-      items.push({
-        id: String(r.id), code: nextCode("spa"), dept: "spa", name: String(r.name).trim(), category: str(r.category), kind: str(r.kind),
-        diet: null, price: num(r.price), stock: num(r.stock), available: r.available !== false,
-        prepMins: 0, durationMin: num(r.duration_min), signature: !!r.is_signature, bestseller: false,
-        ageRestricted: false, servedFrom: hhmm(r.time_from), servedTo: hhmm(r.time_to),
-      });
+      const dept = String(r.dept) as CatalogDept;
+      const kind = str(r.kind) ?? "service";
+      const key = dept === "dining" ? "dining:" + (kind === "table" || kind === "sitting" ? kind : "menu") : dept;
+      const item = base(dept, { ...r, kind }, nextCode(key));
+      if (dept === "maintenance") item.responseMins = num(r.duration_min) || num(r.prep_mins);
+      items.push(item);
     }
   } catch (e) {
     log.warn("catalog: dept_items unavailable", { detail: e instanceof Error ? e.message : String(e) });
   }
 
+  const slots: CatalogSlot[] = [];
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `select id, dept, item_id, label, start_time, end_time, capacity, days, active from time_slots where hotel_id = $1 order by dept, start_time`, hotelId);
+    for (const r of rows) {
+      slots.push({ id: String(r.id), dept: String(r.dept) as CatalogDept, itemId: r.item_id ? String(r.item_id) : null, label: str(r.label) ?? String(r.start_time),
+        startTime: String(r.start_time).slice(0, 5), endTime: hhmm(r.end_time), capacity: num(r.capacity, 1), days: String(r.days ?? "").split(",").filter(Boolean), active: r.active !== false });
+    }
+  } catch (e) {
+    log.warn("catalog: time_slots unavailable", { detail: e instanceof Error ? e.message : String(e) });
+  }
+
   const byCode = new Map(items.map((i) => [i.code, i]));
-  const configured: Record<CatalogDept, boolean> = {
-    fb: items.some((i) => i.dept === "fb"),
-    dining: items.some((i) => i.dept === "dining"),
-    spa: items.some((i) => i.dept === "spa"),
-  };
+  const has = (d: CatalogDept) => items.some((i) => i.dept === d);
+  const configured: Record<CatalogDept, boolean> = { fb: has("fb"), dining: has("dining"), spa: has("spa"), housekeeping: has("housekeeping"), front_desk: has("front_desk"), maintenance: has("maintenance") };
   const now = new Date();
-  return { items, byCode, promptText: renderForPrompt(items, timezone, now), configured, timezone, now };
+  return { items, byCode, slots, promptText: renderForPrompt(items, slots, timezone, now), configured, timezone, now };
 }
 
 /* ---------------------------------------------------------------- availability ------ */
@@ -161,29 +186,53 @@ function to12h(hhmmStr: string): string {
   return hour + (m ? ":" + String(m).padStart(2, "0") : "") + " " + suffix;
 }
 
-function renderForPrompt(items: CatalogItem[], tz: string | null, now: Date): string {
+const DAY_SHORT: Record<string, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+function daysText(days: string[]): string {
+  if (days.length >= 7 || days.length === 0) return "daily";
+  const order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const sorted = order.filter((d) => days.includes(d));
+  if (sorted.join(",") === "mon,tue,wed,thu,fri") return "Mon-Fri";
+  return sorted.map((d) => DAY_SHORT[d] ?? d).join("/");
+}
+
+function slotSummary(item: CatalogItem, slots: CatalogSlot[]): string {
+  const mine = slots.filter((s) => s.dept === item.dept && s.active && (s.itemId === item.id || s.itemId === null));
+  if (mine.length === 0) return "";
+  return mine.slice(0, 6).map((s) => to12h(s.startTime) + " " + daysText(s.days) + " (" + s.capacity + " at a time)").join("; ");
+}
+
+function renderForPrompt(items: CatalogItem[], slots: CatalogSlot[], tz: string | null, now: Date): string {
   if (items.length === 0) return "";
   const sections: string[] = [describeMoment(momentOf(tz, now))];
-  const block = (dept: CatalogDept, title: string, header: string) => {
-    const rows = items.filter((i) => i.dept === dept);
+  const block = (rows: CatalogItem[], title: string, header: string, line: (i: CatalogItem) => string) => {
     if (rows.length === 0) return;
-    const lines = rows.map((i) => {
-      const notes: string[] = [];
-      const a = availability(i, tz);
-      if (!a.ok && a.reason === "sold_out") notes.push("SOLD OUT");
-      if (!a.ok && a.reason === "not_served_now") notes.push("NOT SERVED NOW (" + to12h(i.servedFrom!) + " to " + to12h(i.servedTo!) + ")");
-      if (i.bestseller) notes.push("bestseller");
-      if (i.signature) notes.push("signature");
-      if (i.ageRestricted) notes.push("21+ only");
-      if (dept === "spa" && i.durationMin) notes.push(i.durationMin + " min");
-      if (dept !== "spa" && i.prepMins) notes.push(i.prepMins + " min");
-      return [i.code, i.name, i.category ?? "-", i.diet ?? "-", money(i.price), notes.join(", ") || "-"].join(" | ");
-    });
-    sections.push(title + " (" + header + ")\n" + lines.join("\n"));
+    sections.push(title + " (" + header + ")\n" + rows.map(line).join("\n"));
   };
-  block("fb", "IN-ROOM DINING MENU", "code | name | category | diet | price | notes");
-  block("dining", "RESTAURANT MENU - served in the restaurant, not to rooms", "code | name | category | diet | price | notes");
-  block("spa", "SPA SERVICES", "code | name | category | - | price | notes");
+  const foodLine = (i: CatalogItem) => {
+    const notes: string[] = [];
+    const a = availability(i, tz);
+    if (!a.ok && a.reason === "sold_out") notes.push("SOLD OUT");
+    if (!a.ok && a.reason === "not_served_now") notes.push("NOT SERVED NOW (" + to12h(i.servedFrom!) + " to " + to12h(i.servedTo!) + ")");
+    if (i.bestseller) notes.push("bestseller");
+    if (i.signature) notes.push("signature");
+    if (i.ageRestricted) notes.push("21+ only");
+    if (i.prepMins) notes.push(i.prepMins + " min");
+    return [i.code, i.name, i.category ?? "-", i.diet ?? "-", money(i.price), notes.join(", ") || "-"].join(" | ");
+  };
+  block(items.filter((i) => i.dept === "fb"), "IN-ROOM DINING MENU", "code | name | category | diet | price | notes", foodLine);
+  block(items.filter((i) => i.dept === "dining" && i.kind === "menu"), "RESTAURANT MENU - served in the restaurant, not to rooms", "code | name | category | diet | price | notes", foodLine);
+  block(items.filter((i) => i.dept === "dining" && i.kind === "sitting"), "RESTAURANT SITTINGS - when tables can be booked", "code | sitting | hours",
+    (i) => [i.code, i.name, i.servedFrom && i.servedTo ? to12h(i.servedFrom) + " to " + to12h(i.servedTo) : "-"].join(" | "));
+  block(items.filter((i) => i.dept === "dining" && i.kind === "table"), "RESTAURANT TABLES", "code | table | seats each | how many | notes",
+    (i) => [i.code, i.name, i.seats || "-", i.stock || "-", i.description ?? "-"].join(" | "));
+  block(items.filter((i) => i.dept === "spa"), "SPA TREATMENTS", "code | treatment | duration | price | bookable times",
+    (i) => [i.code, i.name, i.durationMin ? i.durationMin + " min" : "-", money(i.price), slotSummary(i, slots) || "no fixed times - the spa team confirms"].join(" | "));
+  block(items.filter((i) => i.dept === "housekeeping"), "HOUSEKEEPING - services and items guests can ask for", "code | name | type | price or stock",
+    (i) => [i.code, i.name, i.kind ?? "service", i.kind === "amenity" ? (i.stock > 0 ? i.stock + " in stock" : "in stock") : (i.price ? money(i.price) : "included")].join(" | "));
+  block(items.filter((i) => i.dept === "front_desk"), "FRONT DESK SERVICES", "code | service | price | notes",
+    (i) => [i.code, i.name, i.price ? money(i.price) : "included", i.description ?? "-"].join(" | "));
+  block(items.filter((i) => i.dept === "maintenance"), "MAINTENANCE SERVICES - what the hotel can fix", "code | service | category | urgency | response",
+    (i) => [i.code, i.name, i.category ?? "-", i.urgency ?? "routine", i.responseMins ? "within " + i.responseMins + " min" : "-"].join(" | "));
   return sections.join("\n\n");
 }
 
@@ -348,6 +397,78 @@ function suggest(ask: string, dept: CatalogDept, catalog: Catalog, exclude: Set<
   if (kind === "drink" || dept === "spa") take(scored);
   return picked;
 }
+
+/* ---------------------------------------------------------------- when ------------- */
+
+export type When = { date: string | null; time: string | null };
+const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/** YYYY-MM-DD in the hotel's timezone, offset by whole days. */
+export function localDate(tz: string | null, now: Date, offsetDays = 0): string {
+  const d = new Date(now.getTime() + offsetDays * 86400000);
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: tz ?? undefined }).format(d);
+    return parts.slice(0, 10);
+  } catch { return d.toISOString().slice(0, 10); }
+}
+function weekdayOf(isoDate: string): number { return new Date(isoDate + "T12:00:00Z").getUTCDay(); }
+export function niceDate(isoDate: string): string {
+  const d = new Date(isoDate + "T12:00:00Z");
+  return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
+}
+function relDate(isoDate: string, tz: string | null, now: Date): string {
+  if (isoDate === localDate(tz, now)) return "today";
+  if (isoDate === localDate(tz, now, 1)) return "tomorrow";
+  return niceDate(isoDate);
+}
+
+/** Read a date and a clock time out of what the guest wrote: today, tomorrow, a weekday, 10am, 7:30 pm, "at 6", evening. */
+export function parseWhen(text: string, tz: string | null, now: Date, opts: { assumePm?: boolean } = {}): When {
+  const t = " " + normalise(text) + " ";
+  let date: string | null = null;
+  const iso = text.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) date = iso[1] + "-" + iso[2] + "-" + iso[3];
+  else if (/ (today|tonight|this (morning|afternoon|evening)|now|asap) /.test(t)) date = localDate(tz, now);
+  else if (/ (tomorrow|tmrw|tmr|kal) /.test(t)) date = localDate(tz, now, 1);
+  else if (/ day after( tomorrow)? /.test(t)) date = localDate(tz, now, 2);
+  else {
+    for (let i = 0; i < 7 && !date; i++) {
+      if (t.includes(" " + DAY_NAMES[i] + " ") || t.includes(" " + DAY_KEYS[i] + " ")) {
+        const today = localDate(tz, now);
+        for (let k = 0; k < 7; k++) { const cand = localDate(tz, now, k); if (weekdayOf(cand) === i && (k > 0 || cand === today)) { date = cand; break; } }
+      }
+    }
+  }
+  // times come from the raw text, with anything date-shaped removed so 2026-09-14 is not read as 9 o'clock
+  const raw = " " + text.toLowerCase().replace(/\d{4}-\d{2}-\d{2}/g, " ").replace(/\b\d{1,2}[\/.-]\d{1,2}([\/.-]\d{2,4})?\b/g, " ") + " ";
+  let time: string | null = null;
+  const evening = / (evening|tonight|night|dinner) /.test(t), morning = / (morning|breakfast) /.test(t);
+  const finish = (h: number, mins: number, ap: string) => {
+    if (h > 24 || mins > 59) return;
+    if (ap === "pm" && h < 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    if (!ap) {
+      if (h >= 1 && h <= 6 && !morning) h += 12;
+      else if (h >= 7 && h < 12 && (evening || (opts.assumePm && h >= 5))) h += 12;
+    }
+    if (h < 24) time = String(h).padStart(2, "0") + ":" + String(mins).padStart(2, "0");
+  };
+  if (/ (noon|midday) /.test(t)) time = "12:00";
+  else if (/ midnight /.test(t)) time = "00:00";
+  else {
+    const withMins = raw.match(/\b(\d{1,2})[:.](\d{2})\s*(am|pm|a\.m\.|p\.m\.)?\b/);
+    const withAp = raw.match(/\b(\d{1,2})\s*(am|pm|a\.m\.|p\.m\.)\b/);
+    const afterAt = raw.match(/\b(?:at|around|by|for)\s+(\d{1,2})\b/);
+    const lone = normalise(text).split(" ").filter(Boolean).length <= 3 ? raw.match(/\b(\d{1,2})\b/) : null;
+    if (withMins) finish(Number(withMins[1]), Number(withMins[2]), (withMins[3] ?? "").replace(/\./g, ""));
+    else if (withAp) finish(Number(withAp[1]), 0, withAp[2].replace(/\./g, ""));
+    else if (afterAt) finish(Number(afterAt[1]), 0, "");
+    else if (lone && Number(lone[1]) <= 24) finish(Number(lone[1]), 0, "");
+  }
+  return { date, time };
+}
+function minutesOf(hhmmStr: string): number { const [h, m] = hhmmStr.split(":").map(Number); return h * 60 + (m || 0); }
 
 /* ---------------------------------------------------------------- moment ----------- */
 
@@ -544,14 +665,11 @@ export function menuDigest(catalog: Catalog, dept: CatalogDept, history: Map<str
 
 /* ---------------------------------------------------------------- memory ----------- */
 
-/** What Aria is waiting on from this guest - the options just offered, and for what. */
-export type GuestContext = {
-  kind: "choose";
-  dept: CatalogDept;
-  ask: string;
-  qty: number;
-  options: { code: string; name: string; price: number }[];
-};
+/** What Aria is waiting on from this guest: a choice between items, a spa time, or the details of a table. */
+export type GuestContext =
+  | { kind: "choose"; dept: CatalogDept; ask: string; qty: number; options: { code: string; name: string; price: number }[] }
+  | { kind: "slot"; dept: "spa"; itemCode: string; itemName: string; options: { slotId: string; date: string; start: string; label: string }[] }
+  | { kind: "dining"; partySize: number | null; date: string | null; time: string | null };
 
 export type BrainTurn = { role: "user" | "assistant"; content: string };
 
@@ -578,9 +696,11 @@ export async function loadGuestContext(hotelId: string, guestPhone: string): Pro
     const rows = await prisma.$queryRawUnsafe<any[]>(
       `select kind, data from guest_context where hotel_id = $1 and guest_phone = $2 and expires_at > now()`, hotelId, guestPhone);
     const r = rows[0];
-    if (!r || r.kind !== "choose") return null;
+    if (!r || !["choose", "slot", "dining"].includes(String(r.kind))) return null;
     const data = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
-    return data && Array.isArray(data.options) ? { kind: "choose", ...data } as GuestContext : null;
+    if (!data) return null;
+    if (r.kind === "dining") return { kind: "dining", partySize: data.partySize ?? null, date: data.date ?? null, time: data.time ?? null };
+    return Array.isArray(data.options) ? { kind: r.kind, ...data } as GuestContext : null;
   } catch { return null; }
 }
 
@@ -622,6 +742,14 @@ export async function recentTurns(hotelId: string, guestPhone: string, currentMe
 /** The pending offer, phrased for the system prompt. */
 export function describePending(ctx: GuestContext | null): string {
   if (!ctx) return "";
+  if (ctx.kind === "slot") {
+    const opts = ctx.options.map((o, i) => (i + 1) + ") " + niceDate(o.date) + " at " + to12h(o.start)).join("; ");
+    return "You just offered these times for " + ctx.itemName + " (" + ctx.itemCode + "): " + opts + ". If this message picks one - by number, by time, by day, or with a yes - return a spa request with items [{ id: " + ctx.itemCode + " }] and whenText set to that date and time exactly as offered. If they decline or change the subject, continue normally.";
+  }
+  if (ctx.kind === "dining") {
+    const known = [ctx.partySize ? "party of " + ctx.partySize : "", ctx.date ? "date " + niceDate(ctx.date) : "", ctx.time ? "time " + to12h(ctx.time) : ""].filter(Boolean).join(", ");
+    return "You are collecting details for a restaurant table" + (known ? " (known so far: " + known + ")" : "") + ". Merge what this message adds and return ONE dining request with quantity = party size and whenText = date and time. If something is still missing, ask for just that.";
+  }
   const opts = ctx.options.map((o) => o.code + " " + o.name + " " + money(o.price)).join("; ");
   return "You just offered these instead of " + ctx.ask + " (" + ctx.qty + " wanted): " + opts + ". If this message picks one - by name, by number, or with a yes - put it in items with that exact code and qty " + ctx.qty + ". If they decline or talk about something else, leave items empty and just continue normally.";
 }
@@ -631,6 +759,7 @@ const YES = ["yes", "yeah", "yep", "ok", "okay", "sure", "haan", "ha", "thik", "
 
 /** Server-side reading of a reply to a pending offer, for when the model returned nothing usable. */
 function resolvePendingChoice(message: string, ctx: GuestContext, catalog: Catalog): Ask | null {
+  if (ctx.kind !== "choose") return null;
   const m = normalise(message);
   if (!m) return null;
   const options = ctx.options.map((o) => catalog.byCode.get(o.code)).filter((i): i is CatalogItem => !!i);
@@ -675,11 +804,20 @@ const NO = ["no", "nah", "nope", "cancel", "nahi", "nai", "na", "not now", "no t
 export function fastPath(message: string, pending: GuestContext | null, catalog: Catalog): BrainOutput | null {
   if (isMenuQuestion(message)) {
     const dept = menuDeptFor(message, catalog);
-    if (dept) return { requests: [], reply: "Of course.", showMenu: dept === "dining" ? "fb" : dept, sentiment: "neutral", needsHuman: false };
+    if (dept) return { requests: [], reply: "Of course.", showMenu: dept === "spa" ? "spa" : "fb", sentiment: "neutral", needsHuman: false };
   }
   if (!pending) return null;
   const words = normalise(message).split(" ").filter(Boolean);
-  if (words.length === 0 || words.length > 6) return null;
+  if (words.length === 0 || words.length > 8) return null;
+  if (pending.kind === "slot") {
+    const pick = resolveSlotPick(message, pending, catalog.timezone, catalog.now);
+    if (!pick) return null;
+    return {
+      requests: [{ intent: "spa", detail: pending.itemName, priority: "normal", items: [{ id: pending.itemCode, name: pending.itemName, qty: 1 }], whenText: pick.date + " " + pick.start }],
+      reply: "Perfect.", sentiment: "neutral", needsHuman: false,
+    };
+  }
+  if (pending.kind !== "choose" || words.length > 6) return null;
   const choice = resolvePendingChoice(message, pending, catalog);
   if (!choice || !choice.code) return null;
   const intent: "spa" | "room_service" = pending.dept === "spa" ? "spa" : "room_service";
@@ -689,6 +827,95 @@ export function fastPath(message: string, pending: GuestContext | null, catalog:
     sentiment: "neutral",
     needsHuman: false,
   };
+}
+
+/* ---------------------------------------------------------------- departments ------ */
+
+type SlotOffer = { slotId: string; date: string; start: string; label: string; free: number };
+
+/** Free spa times for one treatment on the given dates, earliest first, never in the past. */
+async function slotOffers(hotelId: string, catalog: Catalog, item: CatalogItem, dates: string[]): Promise<SlotOffer[]> {
+  const today = localDate(catalog.timezone, catalog.now);
+  const nowMin = momentOf(catalog.timezone, catalog.now).hour * 60 + Number(new Intl.DateTimeFormat("en-GB", { minute: "numeric", timeZone: catalog.timezone ?? undefined }).format(catalog.now));
+  const out: SlotOffer[] = [];
+  for (const date of dates) {
+    const res = await getAvailability(hotelId, "spa", date, item.id);
+    if (!res.ok) continue;
+    for (const a of res.data) {
+      const start = String(a.startTime).slice(0, 5);
+      if (a.free <= 0) continue;
+      if (date === today && minutesOf(start) <= nowMin + 15) continue;
+      out.push({ slotId: a.slotId, date, start, label: a.label, free: a.free });
+    }
+  }
+  return out;
+}
+
+function offerLine(o: SlotOffer, tz: string | null, now: Date): string {
+  return relDate(o.date, tz, now) + " at " + to12h(o.start);
+}
+function offersText(offers: SlotOffer[], tz: string | null, now: Date): string {
+  const byDate = new Map<string, SlotOffer[]>();
+  for (const o of offers) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
+  return joinNatural(Array.from(byDate.entries()).map(([d, list]) => relDate(d, tz, now) + " at " + joinNatural(list.map((o) => to12h(o.start)))));
+}
+
+/** The guest answering an offer of times: a number, "yes", a time, or a day. */
+function resolveSlotPick(message: string, ctx: GuestContext, tz: string | null, now: Date): { slotId: string; date: string; start: string; label: string } | null {
+  if (ctx.kind !== "slot" || ctx.options.length === 0) return null;
+  const m = normalise(message);
+  const digitOnly = /^\s*(\d)\s*$/.exec(m);
+  if (digitOnly && Number(digitOnly[1]) <= ctx.options.length) return ctx.options[Number(digitOnly[1]) - 1];
+  const ord = ORDINALS.findIndex((o) => m.includes(o));
+  if (ord >= 0 && ctx.options[ord % 3]) return ctx.options[ord % 3];
+  const when = parseWhen(message, tz, now);
+  if (when.time || when.date) {
+    const hit = ctx.options.find((o) => (!when.date || o.date === when.date) && (!when.time || Math.abs(minutesOf(o.start) - minutesOf(when.time)) <= 30));
+    if (hit) return hit;
+    if (when.time && !when.date) return ctx.options.find((o) => Math.abs(minutesOf(o.start) - minutesOf(when.time!)) <= 30) ?? null;
+    return null;
+  }
+  if (ctx.options.length === 1 && YES.some((y) => m === y || m.startsWith(y + " ") || m.endsWith(" " + y))) return ctx.options[0];
+  return null;
+}
+
+const MAINT_HINTS: { words: string[]; category: RegExp }[] = [
+  { words: ["tv", "television", "remote", "light", "lights", "bulb", "socket", "plug", "power", "fan", "switch", "kettle", "fridge", "minibar", "electric", "electricity"], category: /electr|light|applian/i },
+  { words: ["ac", "a c", "aircon", "air", "conditioner", "conditioning", "cooling", "heater", "heating", "temperature", "hot", "cold", "thermostat"], category: /air|ac\b|hvac|cool|heat|climate/i },
+  { words: ["tap", "faucet", "leak", "leaking", "flush", "toilet", "commode", "shower", "water", "drain", "geyser", "basin", "sink", "pipe", "bathroom"], category: /plumb|water|bath/i },
+  { words: ["wifi", "wi fi", "internet", "network", "signal", "connection", "router"], category: /wifi|internet|network|it\b/i },
+  { words: ["door", "lock", "key", "card", "window", "curtain", "furniture", "bed", "chair", "table", "wardrobe", "drawer", "handle", "safe"], category: /carpent|door|furnit|lock|room/i },
+];
+
+/** Which maintenance service covers what the guest described, if any. */
+function matchMaintenance(detail: string, catalog: Catalog): CatalogItem | null {
+  const pool = catalog.items.filter((i) => i.dept === "maintenance" && i.available);
+  if (pool.length === 0) return null;
+  const t = " " + normalise(detail) + " ";
+  const hint = MAINT_HINTS.find((h) => h.words.some((w) => t.includes(" " + w + " ")));
+  let best: { item: CatalogItem; score: number } | null = null;
+  for (const item of pool) {
+    let score = Math.max(similarity(detail, item.name), item.description ? similarity(detail, item.description) * 0.8 : 0);
+    if (hint && ((item.category && hint.category.test(item.category)) || hint.category.test(item.name))) score += 0.5;
+    if (!best || score > best.score) best = { item, score };
+  }
+  return best && best.score >= 0.35 ? best.item : null;
+}
+
+function within(from: string | null, to: string | null, time: string): boolean {
+  if (!from || !to) return true;
+  return from <= to ? time >= from && time <= to : time >= from || time <= to;
+}
+
+/** Confirmed bookings already holding tables in this sitting on this date. */
+async function tablesTaken(hotelId: string, date: string, sitting: CatalogItem | null): Promise<number> {
+  try {
+    const rows = await prisma.diningBooking.findMany({
+      where: { hotelId, bookingDate: new Date(date + "T00:00:00Z"), status: { in: ["pending", "confirmed"] as never } },
+      select: { bookingTime: true },
+    });
+    return rows.filter((b: { bookingTime: string | null }) => !sitting || !b.bookingTime || within(sitting.servedFrom, sitting.servedTo, String(b.bookingTime).slice(0, 5))).length;
+  } catch { return 0; }
 }
 
 /* ---------------------------------------------------------------- applying --------- */
@@ -891,7 +1118,7 @@ export async function applyCatalog(
   hotelId: string,
   session: { roomNumber?: string | null; claimedGuestName?: string | null },
   guestPhone: string,
-  opts: { dryRun?: boolean; pending?: GuestContext | null; message?: string } = {}
+  opts: { dryRun?: boolean; pending?: GuestContext | null; message?: string; deptModes?: Record<string, string> } = {}
 ): Promise<BrainOutput> {
   const room = session.roomNumber ?? null;
   const kept: BrainRequest[] = [];
@@ -903,25 +1130,32 @@ export async function applyCatalog(
   let ordered = false;
   let deadEnd: CatalogDept | null = null;
   const placedItems: CatalogItem[] = [];
+  const pending = opts.pending ?? null;
 
+  const tz = catalog.timezone, now = catalog.now;
+  const modeOf = (dept: string) => opts.deptModes?.[dept] ?? (dept === "fb" || dept === "housekeeping" ? "auto" : dept === "maintenance" ? "maintenance" : "accept_decline");
   const foodRequests = output.requests.filter((r) => r.intent === "room_service" && catalog.configured.fb);
   const spaRequests = output.requests.filter((r) => r.intent === "spa" && catalog.configured.spa);
-  for (const r of output.requests) {
-    if (!foodRequests.includes(r) && !spaRequests.includes(r)) kept.push(r);
-  }
+  const diningItems = catalog.items.filter((i) => i.dept === "dining" && (i.kind === "table" || i.kind === "sitting"));
+  const diningRequests = output.requests.filter((r) => r.intent === "dining" && (diningItems.length > 0 || (pending && pending.kind === "dining")));
+  const hkRequests = output.requests.filter((r) => r.intent === "housekeeping" && catalog.configured.housekeeping);
+  const mtRequests = output.requests.filter((r) => r.intent === "maintenance" && catalog.configured.maintenance);
+  const fdRequests = output.requests.filter((r) => r.intent === "concierge" && catalog.configured.front_desk);
+  const handled = new Set<BrainRequest>([...foodRequests, ...spaRequests, ...diningRequests, ...hkRequests, ...mtRequests, ...fdRequests]);
+  for (const r of output.requests) if (!handled.has(r)) kept.push(r);
 
   // a reply to a pending offer that the model did not turn into items: read it ourselves
-  const pending = opts.pending ?? null;
   const extraAsks: Ask[] = [];
-  if (pending && opts.message) {
-    const alreadyChosen = foodRequests.concat(spaRequests).some((r) => (r.items ?? []).some((it) => pending.options.some((o) => o.code === it.id)));
+  if (pending && pending.kind === "choose" && opts.message) {
+    const offered = pending.options;
+    const alreadyChosen = foodRequests.concat(spaRequests).some((r) => (r.items ?? []).some((it) => offered.some((o) => o.code === it.id)));
     if (!alreadyChosen) {
       const choice = resolvePendingChoice(opts.message, pending, catalog);
       if (choice) extraAsks.push(choice);
     }
   }
 
-  const pendingDept = pending?.dept ?? "fb";
+  const pendingDept: CatalogDept = pending && pending.kind === "choose" ? pending.dept : "fb";
   if (foodRequests.length || (extraAsks.length && pendingDept === "fb")) {
     touchedFood = true;
     const asks = foodRequests.flatMap((r) => asksFrom(r, "fb", catalog)).concat(pendingDept === "fb" ? extraAsks : []);
@@ -953,26 +1187,167 @@ export async function applyCatalog(
     log.info("catalog: room service resolved", { placed: placed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
   }
 
+  // ---------------- spa: treatments with real bookable times ----------------
   if (spaRequests.length || (extraAsks.length && pendingDept === "spa")) {
     touchedSpa = true;
     const asks = spaRequests.flatMap((r) => asksFrom(r, "spa", catalog)).concat(pendingDept === "spa" ? extraAsks : []);
     const { confirmed, unavailable, ambiguous } = resolveAsks(asks, "spa", catalog);
-    if (confirmed.length) {
-      ordered = true;
-      const first = spaRequests[0] ?? { intent: "spa" as const, detail: "", priority: "normal" as const };
-      const when = spaRequests.map((r) => r.whenText).find(Boolean);
-      kept.push({
-        ...first,
-        intent: "spa",
-        detail: "Spa: " + confirmed.map((c) => c.item.name + " (" + money(c.item.price) + (c.item.durationMin ? ", " + c.item.durationMin + " min" : "") + ")").join(", ") + (when ? " - " + when : ""),
-      });
+    const lines: string[] = [];
+    const mode = modeOf("spa");
+    for (const c of confirmed) {
+      const item = c.item;
+      const hasSlots = catalog.slots.some((s) => s.dept === "spa" && s.active && (s.itemId === item.id || s.itemId === null));
+      const whenText = spaRequests.map((r) => r.whenText).find(Boolean) ?? "";
+      const when = parseWhen(whenText + " " + (opts.message ?? ""), tz, now);
+      const label = item.name + " (" + (item.durationMin ? item.durationMin + " min, " : "") + money(item.price) + ")";
+      if (!hasSlots) {
+        ordered = true;
+        kept.push({ intent: "spa", detail: "Spa: " + label + (whenText ? " - " + whenText : ""), priority: "normal", whenText: whenText || undefined });
+        lines.push("Spa request noted: " + label + (whenText ? " for " + whenText : "") + ". The spa team will confirm your time shortly.");
+        continue;
+      }
+      const today = localDate(tz, now);
+      if (when.time) {
+        const date = when.date ?? today;
+        const offers = await slotOffers(hotelId, catalog, item, [date]);
+        const hit = offers.find((o) => Math.abs(minutesOf(o.start) - minutesOf(when.time!)) <= 30);
+        if (hit) {
+          const booked = opts.dryRun ? { ok: true as const } : await bookSlot({ hotelId, slotId: hit.slotId, onDate: hit.date, roomNumber: room ?? undefined, guestName: session.claimedGuestName ?? undefined, guestPhone, partySize: 1, note: item.name });
+          if (booked.ok) {
+            ordered = true;
+            const whenNice = niceDate(hit.date) + " at " + to12h(hit.start);
+            kept.push({ intent: "spa", detail: "Spa: " + label + " - " + whenNice + " (slot reserved)", priority: "normal", whenText: whenNice });
+            lines.push(mode === "auto"
+              ? "Your " + item.name + " is booked for " + whenNice + " (" + (item.durationMin ? item.durationMin + " min, " : "") + money(item.price) + ")."
+              : "I have reserved " + whenNice + " for your " + item.name + " (" + (item.durationMin ? item.durationMin + " min, " : "") + money(item.price) + ") - the spa will confirm shortly.");
+            mentions.push(item.name);
+            continue;
+          }
+        }
+        const alt = (offers.length ? offers : await slotOffers(hotelId, catalog, item, [localDate(tz, now, 1), localDate(tz, now, 2), localDate(tz, now, 3)])).slice(0, 3);
+        if (alt.length) {
+          lines.push(to12h(when.time) + " " + relDate(date, tz, now) + " is not available for " + item.name + ". " + (alt.length === 1
+            ? "The next free time is " + offerLine(alt[0], tz, now) + " - shall I book that?"
+            : "Free times: " + offersText(alt, tz, now) + ". Which suits you?"));
+          nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, options: alt.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
+        } else {
+          ordered = true;
+          kept.push({ intent: "spa", detail: "Spa: " + label + " - " + whenText + " (no open slot, team to confirm)", priority: "normal", whenText: whenText || undefined });
+          lines.push("No fixed times are open for " + item.name + " around then - the spa team will confirm a time with you shortly.");
+        }
+        mentions.push(item.name);
+        continue;
+      }
+      const offers = (await slotOffers(hotelId, catalog, item, [today, localDate(tz, now, 1), localDate(tz, now, 2)])).slice(0, 3);
+      if (offers.length) {
+        lines.push(offers.length === 1
+          ? "The next free time for " + label + " is " + offerLine(offers[0], tz, now) + ". Shall I book it?"
+          : label + " is available " + offersText(offers, tz, now) + ". Which time suits you?");
+        nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, options: offers.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
+      } else {
+        ordered = true;
+        kept.push({ intent: "spa", detail: "Spa: " + label + " (no open slot in the next days, team to confirm)", priority: "normal" });
+        lines.push("There are no open times for " + item.name + " in the next few days - the spa team will get back to you with options.");
+      }
+      mentions.push(item.name);
     }
+    for (const u of unavailable) lines.push(unavailableText(u, "spa"));
+    for (const a of ambiguous) lines.push(ambiguityText(a, "spa"));
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "spa", room, guestPhone, unavailable);
-    summaries.push(spaSummary(confirmed, unavailable, ambiguous));
+    summaries.push(lines.join("\n\n"));
     if (!confirmed.length && !ambiguous.length && unavailable.length && unavailable.every((u) => u.suggestions.length === 0)) deadEnd = "spa";
-    mentions.push(...confirmed.map((c) => c.item.name), ...unavailable.map((u) => u.ask));
+    mentions.push(...unavailable.map((u) => u.ask));
     if (!nextContext) nextContext = offerFrom(ambiguous, unavailable, "spa", 1);
     log.info("catalog: spa resolved", { confirmed: confirmed.length, unavailable: unavailable.length, ambiguous: ambiguous.length, phone: guestPhone });
+  }
+
+  // ---------------- dining: a table needs a party size and a time inside a sitting ----------------
+  if (diningRequests.length) {
+    const r = diningRequests[0];
+    const prev = pending && pending.kind === "dining" ? pending : null;
+    const partySize = r.quantity ?? prev?.partySize ?? null;
+    const when = parseWhen((r.whenText ?? "") + " " + (opts.message ?? ""), tz, now, { assumePm: true });
+    const date = when.date ?? prev?.date ?? (when.time ? localDate(tz, now) : null);
+    const time = when.time ?? prev?.time ?? null;
+    const sittings = diningItems.filter((i) => i.kind === "sitting" && i.available);
+    const tables = diningItems.filter((i) => i.kind === "table" && i.available);
+    const missing: string[] = [];
+    if (!partySize) missing.push("for how many guests");
+    if (!time) missing.push("what time");
+    const sitting = time && sittings.length ? sittings.find((s) => within(s.servedFrom, s.servedTo, time)) ?? null : null;
+    const hoursText = sittings.length ? joinNatural(sittings.map((s) => s.name + " " + (s.servedFrom && s.servedTo ? to12h(s.servedFrom) + " to " + to12h(s.servedTo) : ""))) : "";
+    if (missing.length) {
+      summaries.push("For your table, " + missing.join(" and ") + "?" + (hoursText ? " The restaurant serves " + hoursText + "." : ""));
+      nextContext = { kind: "dining", partySize, date, time };
+    } else if (time && sittings.length && !sitting) {
+      summaries.push("The restaurant is not open at " + to12h(time) + ". It serves " + hoursText + " - which time would you like?");
+      nextContext = { kind: "dining", partySize, date, time: null };
+    } else {
+      const bookDate = date ?? localDate(tz, now);
+      const suitable = tables.filter((t) => t.seats >= (partySize ?? 1)).reduce((s, t) => s + Math.max(1, t.stock), 0);
+      const taken = tables.length && !opts.dryRun ? await tablesTaken(hotelId, bookDate, sitting) : 0;
+      const largest = tables.reduce((m, t) => Math.max(m, t.seats), 0);
+      const whenNice = niceDate(bookDate) + " at " + to12h(time!);
+      if (tables.length && suitable > 0 && taken >= suitable) {
+        const others = sittings.filter((s) => s !== sitting);
+        summaries.push("We are fully booked for " + (sitting ? sitting.name + " " : "") + relDate(bookDate, tz, now) + "." + (others.length ? " " + joinNatural(others.map((s) => s.name + " " + (s.servedFrom ? to12h(s.servedFrom) : "") + (s.servedTo ? " to " + to12h(s.servedTo) : ""))) + " still has space - would that work?" : " Would another day suit you?"));
+        nextContext = { kind: "dining", partySize, date: null, time: null };
+      } else {
+        ordered = true;
+        const bigParty = tables.length && partySize! > largest;
+        kept.push({ ...r, intent: "dining", quantity: partySize!, whenText: whenNice + " (" + bookDate + " " + time + ")", detail: "Table for " + partySize + " - " + whenNice + (sitting ? " (" + sitting.name + ")" : "") + (bigParty ? " - larger than our biggest table (" + largest + "), needs arranging" : "") });
+        summaries.push((modeOf("dining") === "auto"
+          ? "Your table for " + partySize + " is booked for " + whenNice + "."
+          : "Table for " + partySize + " requested for " + whenNice + " - the restaurant will confirm shortly.") + (bigParty ? " Our largest table seats " + largest + ", so the team will arrange seating for " + partySize + "." : ""));
+      }
+    }
+    log.info("catalog: dining resolved", { partySize, date, time, phone: guestPhone });
+  }
+
+  // ---------------- housekeeping: confirm what is on the list, pass the rest through ----------------
+  if (hkRequests.length) {
+    const asks = hkRequests.flatMap((r) => asksFrom(r, "housekeeping", catalog));
+    const { confirmed } = resolveAsks(asks, "housekeeping", catalog);
+    if (confirmed.length) {
+      ordered = true;
+      const parts = confirmed.map((c) => (c.item.kind === "amenity" ? c.qty + " x " : "") + c.item.name + (c.item.price ? " (" + money(c.item.price) + ")" : ""));
+      const wanted = (c: Confirmed) => asks.filter((a) => a.code === c.item.code || normalise(a.text) === normalise(c.item.name)).reduce((s, a) => s + a.qty, 0);
+      const short = confirmed.filter((c) => c.item.kind === "amenity" && c.item.stock > 0 && wanted(c) > c.qty);
+      kept.push({ ...hkRequests[0], intent: "housekeeping", detail: "Housekeeping: " + parts.join(", "), quantity: confirmed.reduce((s, c) => s + c.qty, 0) });
+      summaries.push("Housekeeping will bring " + joinNatural(parts) + (room ? " to Room " + room : "") + " shortly." + (short.length ? " We have only " + short.map((c) => c.item.stock + " x " + c.item.name).join(", ") + " available right now, so the team will bring what we have." : ""));
+      mentions.push(...confirmed.map((c) => c.item.name));
+      const others = hkRequests.slice(1);
+      for (const o of others) kept.push(o);
+    } else {
+      for (const r of hkRequests) kept.push(r);
+    }
+  }
+
+  // ---------------- maintenance: promise the response the GM configured, never refuse ----------------
+  if (mtRequests.length) {
+    for (const r of mtRequests) {
+      const svc = matchMaintenance(r.detail + " " + (opts.message ?? ""), catalog);
+      if (!svc) { kept.push(r); continue; }
+      ordered = true;
+      const urgent = /emergen|same/i.test(svc.urgency ?? "") || r.priority === "urgent";
+      kept.push({ ...r, intent: "maintenance", detail: "Maintenance: " + svc.name + (svc.category ? " (" + svc.category + ")" : "") + " - " + r.detail, priority: urgent ? "urgent" : r.priority });
+      summaries.push((svc.category ? "Our " + svc.category.toLowerCase() + " team" : "Our maintenance team") + (svc.responseMins ? " will be with you" + (room ? " in Room " + room : "") + " within " + svc.responseMins + " minutes." : " is on it and will be with you" + (room ? " in Room " + room : "") + " shortly."));
+      mentions.push(svc.name);
+    }
+  }
+
+  // ---------------- front desk: services with a price ----------------
+  if (fdRequests.length) {
+    for (const r of fdRequests) {
+      const asks = (r.items ?? []).map((it) => ({ text: it.name, qty: Math.max(1, it.qty ?? 1), code: it.id }));
+      const { confirmed } = asks.length ? resolveAsks(asks, "front_desk", catalog) : { confirmed: [] as Confirmed[] };
+      if (!confirmed.length) { kept.push(r); continue; }
+      ordered = true;
+      const parts = confirmed.map((c) => c.item.name + (c.item.price ? " (" + money(c.item.price) + ")" : ""));
+      kept.push({ ...r, intent: "concierge", detail: "Front desk: " + parts.join(", ") + " - " + r.detail });
+      summaries.push(joinNatural(parts) + (modeOf("front_desk") === "auto" ? " - arranged. " : " - the front desk will arrange this and confirm shortly. ") + (r.whenText ? "Noted for " + r.whenText + "." : ""));
+      mentions.push(...confirmed.map((c) => c.item.name));
+    }
   }
 
   const declined = !!(pending && opts.message && NO.some((n) => normalise(opts.message!) === n));
@@ -1010,7 +1385,7 @@ export async function applyCatalog(
   }
   if (!opts.dryRun) {
     if (nextContext) await saveGuestContext(hotelId, guestPhone, nextContext);
-    else if (touchedFood || touchedSpa || declined) await clearGuestContext(hotelId, guestPhone);
+    else if (touchedFood || touchedSpa || declined || diningRequests.length || (pending && pending.kind !== "choose" && ordered)) await clearGuestContext(hotelId, guestPhone);
   }
 
   const extra = summaries.filter(Boolean).join("\n\n");
