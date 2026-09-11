@@ -63,7 +63,7 @@ export async function checkInRoom(hotelId: string, roomNumber: string, opts: { g
         const session = await checkInGuest(hotelId, roomNumber, opts.guestName ?? "Guest", opts.guestPhone, opts.checkOut ?? null);
         const customCheckoutTime = opts.checkOut ? new Date(opts.checkOut).toISOString() : null;
         await prisma.$executeRawUnsafe(`update "Session" set "guestName"=$2, "customCheckoutTime"=$3, "updatedAt"=now() where id=$1`, session.id, opts.guestName ?? null, customCheckoutTime);
-      } catch (se) { /* session link is best-effort; room check-in still succeeds */ console.log("session link warn:", se instanceof Error ? se.message : String(se)); }
+      } catch (se) { /* session link is best-effort; room check-in still succeeds */ console.log("CHECK-IN SESSION LINK FAILED - this guest will not be recognised on WhatsApp:", se instanceof Error ? se.message : String(se)); }
     }
 
     return { ok: true, data: norm(rows[0]) };
