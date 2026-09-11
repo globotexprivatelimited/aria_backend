@@ -158,4 +158,139 @@ export async function hotelRoomTarget(hotelId: string): Promise<Result<{ target:
     const created = await prisma.$queryRawUnsafe<any[]>(`select count(*) n from rooms where hotel_id=$1`, hotelId);
     return { ok: true, data: { target: Number(h[0]?.room_count ?? 0), created: Number(created[0].n) } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}import { hotelTimezone, zonedAt, formatLocal } from "../lib/localtime";
+
+/* ---------------------------------------------------------------- checkout time ---- */
+
+/**
+ * A stay's checkout time lives in three places - the room board, the guest's session, and the
+ * nudge we send before they leave. This moves all three together, so extending or shortening a
+ * stay from the room modal cannot leave the brain promising one thing and the board showing another.
+ */
+export async function setCheckout(
+  hotelId: string,
+  roomNumber: string,
+  newCheckout: string,
+  opts: { by?: string | null; reason?: string | null } = {}
+): Promise<Result<any>> {
+  if (!hotelId || !roomNumber || !newCheckout) return { ok: false, error: "hotelId, roomNumber and a new checkout time are required" };
+  const next = new Date(newCheckout);
+  if (Number.isNaN(next.getTime())) return { ok: false, error: "That checkout time is not a valid date." };
+  const now = new Date();
+  if (next.getTime() > now.getTime() + 365 * 86400000) return { ok: false, error: "That checkout is more than a year away - please check the date." };
+
+  try {
+    const tz = await hotelTimezone(hotelId);
+    const before = await prisma.$queryRawUnsafe<any[]>(`select * from rooms where hotel_id=$1 and room_number=$2`, hotelId, roomNumber);
+    const room = before[0];
+    if (!room) return { ok: false, error: "Room not found." };
+    if (room.status !== "occupied") return { ok: false, error: "Room " + roomNumber + " is not occupied - there is no stay to change." };
+
+    const checkIn = room.check_in ? new Date(room.check_in) : null;
+    if (checkIn && next.getTime() <= checkIn.getTime()) return { ok: false, error: "Checkout has to be after the check-in time." };
+    // a checkout in the past is an ended stay, not a shorter one - that is the Check out button's job
+    if (next.getTime() <= now.getTime()) return { ok: false, error: "That time has already passed. Use Check out guest to end the stay now." };
+
+    const previous = room.check_out ? new Date(room.check_out) : null;
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `update rooms set check_out=$3::timestamptz where hotel_id=$1 and room_number=$2 returning *`,
+      hotelId, roomNumber, next.toISOString());
+    if (!rows[0]) return { ok: false, error: "Could not update the room." };
+
+    // the guest's live session carries the same time, so Aria and the board never disagree
+    const phone: string | null = room.guest_phone ?? null;
+    let sessionId: string | null = null;
+    if (phone) {
+      const session = await prisma.session.findFirst({ where: { hotelId, guestPhone: phone }, orderBy: { createdAt: "desc" } });
+      if (session) {
+        sessionId = session.id;
+        await prisma.session.update({ where: { id: session.id }, data: { checkOutDate: next, customCheckoutTime: next.toISOString() } });
+        await rearmPreCheckout(hotelId, session.id, phone, next, now, tz);
+      }
+    }
+
+    await recordStayEvent({ hotelId, roomNumber, sessionId, guestPhone: phone, previous, next, by: opts.by ?? null, reason: opts.reason ?? null });
+    return {
+      ok: true,
+      data: {
+        room: norm(rows[0]),
+        previousCheckout: previous ? previous.toISOString() : null,
+        checkout: next.toISOString(),
+        sessionUpdated: !!sessionId,
+        guestMessage: guestCheckoutLine(previous, next, tz),
+      },
+    };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not change the checkout time." }; }
+}
+
+/** The sentence the front desk can send the guest, if they choose to tell them. */
+function guestCheckoutLine(previous: Date | null, next: Date, tz: string | null): string {
+  const when = formatLocal(next, tz);
+  const longer = previous ? next.getTime() > previous.getTime() : false;
+  return (previous && longer ? "Good news - your checkout has been extended to " : "Your checkout is now ") + when + ".";
+}
+
+/**
+ * Move the pre-checkout nudge with the stay: drop the one that is still waiting and set a new one.
+ * Normally that is the evening before; for a short extension the evening is already gone, so we
+ * aim a few hours ahead of the new time instead, and skip it entirely when that is too close.
+ */
+async function rearmPreCheckout(hotelId: string, sessionId: string, guestPhone: string, checkout: Date, now: Date, tz: string | null): Promise<void> {
+  try {
+    await prisma.proactiveTrigger.deleteMany({ where: { sessionId, triggerType: "pre_checkout" as never, status: "pending" as never } });
+    let at = zonedAt(checkout, tz, 19, 0, -1);
+    if (at.getTime() <= now.getTime()) at = new Date(checkout.getTime() - 3 * 3600 * 1000);
+    if (at.getTime() <= now.getTime() + 5 * 60000) return;
+    await prisma.proactiveTrigger.create({
+      data: { hotelId, sessionId, guestPhone, triggerType: "pre_checkout" as never, scheduledAt: at, status: "pending" as never },
+    });
+  } catch (e) { console.log("pre-checkout re-arm warn:", e instanceof Error ? e.message : String(e)); }
+}
+
+let stayEventsReady = false;
+
+/** Every change to a stay is written down - a disputed late checkout should have a record, not a memory. */
+async function recordStayEvent(e: {
+  hotelId: string; roomNumber: string; sessionId: string | null; guestPhone: string | null;
+  previous: Date | null; next: Date; by: string | null; reason: string | null;
+}): Promise<void> {
+  try {
+    if (!stayEventsReady) {
+      await prisma.$executeRawUnsafe(
+        `create table if not exists stay_events (
+           id uuid primary key default gen_random_uuid(),
+           hotel_id text not null, room_number text not null, session_id text, guest_phone text,
+           kind text not null default 'checkout_changed',
+           previous_at timestamptz, new_at timestamptz, changed_by text, reason text,
+           created_at timestamptz not null default now())`);
+      await prisma.$executeRawUnsafe(`create index if not exists stay_events_hotel_idx on stay_events (hotel_id, created_at desc)`);
+      stayEventsReady = true;
+    }
+    await prisma.$executeRawUnsafe(
+      `insert into stay_events (hotel_id, room_number, session_id, guest_phone, kind, previous_at, new_at, changed_by, reason)
+       values ($1,$2,$3,$4,'checkout_changed',$5::timestamptz,$6::timestamptz,$7,$8)`,
+      e.hotelId, e.roomNumber, e.sessionId, e.guestPhone, e.previous ? e.previous.toISOString() : null, e.next.toISOString(), e.by, e.reason);
+  } catch (err) { console.log("stay event warn:", err instanceof Error ? err.message : String(err)); }
+}
+
+/** What has been changed on a stay, newest first - for the room modal and for revenue questions later. */
+export async function stayEvents(hotelId: string, roomNumber?: string, limit = 20): Promise<Result<any[]>> {
+  if (!hotelId) return { ok: false, error: "hotelId required" };
+  try {
+    const rows = roomNumber
+      ? await prisma.$queryRawUnsafe<any[]>(`select * from stay_events where hotel_id=$1 and room_number=$2 order by created_at desc limit $3`, hotelId, roomNumber, limit)
+      : await prisma.$queryRawUnsafe<any[]>(`select * from stay_events where hotel_id=$1 order by created_at desc limit $2`, hotelId, limit);
+    return { ok: true, data: rows.map((r: any) => ({
+      room: r.room_number, kind: r.kind, previousAt: iso(r.previous_at), newAt: iso(r.new_at),
+      by: r.changed_by ?? null, reason: r.reason ?? null, at: iso(r.created_at),
+    })) };
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not load stay history." }; }
+}
+
+/** Keep the room board in step when a PMS moves a checkout through the universal API. */
+export async function syncRoomCheckout(hotelId: string, roomNumber: string | undefined, newCheckout: string): Promise<void> {
+  if (!hotelId || !roomNumber || !newCheckout) return;
+  try {
+    await prisma.$executeRawUnsafe(`update rooms set check_out=$3::timestamptz where hotel_id=$1 and room_number=$2 and status='occupied'`, hotelId, roomNumber, new Date(newCheckout).toISOString());
+  } catch (e) { console.log("room checkout sync warn:", e instanceof Error ? e.message : String(e)); }
 }

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { listRooms, setupRooms, upsertRoom, checkInRoom, checkOutRoom, markClean, roomStats, editRoom, deleteRoom, clearFloor, hotelRoomTarget } from "../rooms/service";
+import { listRooms, setupRooms, upsertRoom, checkInRoom, checkOutRoom, markClean, roomStats, editRoom, deleteRoom, clearFloor, hotelRoomTarget, setCheckout, stayEvents } from "../rooms/service";
 export const roomsRouter = Router();
 const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
 function checkKey(req: import("express").Request): boolean { return req.header("x-admin-key") === ADMIN_KEY; }
@@ -57,4 +57,13 @@ roomsRouter.post("/api/rooms/clear-floor", async (req, res) => {
 roomsRouter.get("/api/rooms/target", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
   const r = await hotelRoomTarget(String(req.query.hotelId ?? "")); return res.status(r.ok ? 200 : 400).json(r);
+});
+roomsRouter.post("/api/rooms/set-checkout", async (req, res) => {
+  if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
+  const { hotelId, roomNumber, checkOut, by, reason } = req.body ?? {};
+  const r = await setCheckout(hotelId, roomNumber, checkOut, { by, reason }); return res.status(r.ok ? 200 : 400).json(r);
+});
+roomsRouter.get("/api/rooms/stay-events", async (req, res) => {
+  if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
+  const r = await stayEvents(String(req.query.hotelId ?? ""), req.query.roomNumber ? String(req.query.roomNumber) : undefined); return res.status(r.ok ? 200 : 400).json(r);
 });

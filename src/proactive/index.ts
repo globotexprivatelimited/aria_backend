@@ -1,3 +1,4 @@
+import { eveningBefore } from "../lib/localtime";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { sendReply } from "../lib/notify";
@@ -84,8 +85,8 @@ export async function scheduleStayTriggers(
 
   if (checkOutDate) {
     const preCheckout = new Date(checkOutDate);
-    preCheckout.setHours(19, 0, 0, 0);
-    preCheckout.setDate(preCheckout.getDate() - 1);
+    preCheckout.setTime((await eveningBefore(hotelId, checkOutDate)).getTime());
+    
     if (preCheckout.getTime() > now) {
       await schedule(hotelId, sessionId, guestPhone, "pre_checkout", preCheckout);
     }

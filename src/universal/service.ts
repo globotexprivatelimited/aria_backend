@@ -1,3 +1,4 @@
+import { syncRoomCheckout } from "../rooms/service";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { checkInGuest, checkOutGuest } from "../lib/frontdesk";
@@ -56,10 +57,10 @@ export async function universalUpdate(hotelId: string, rawBody: Record<string, u
 
   const data: Record<string, unknown> = {};
   if (d.newRoom) data.roomNumber = d.newRoom;
-  if (d.newCheckoutAt) data.checkOutDate = new Date(d.newCheckoutAt);
+  if (d.newCheckoutAt) { data.checkOutDate = new Date(d.newCheckoutAt); (data as any).customCheckoutTime = new Date(d.newCheckoutAt).toISOString(); }
 
   const updated = await prisma.session.update({ where: { id: session.id }, data });
-  log.info("universal: update", { source: d.source, room: d.room, newRoom: d.newRoom, newCheckout: d.newCheckoutAt });
+  if (d.newCheckoutAt) await syncRoomCheckout(updated.hotelId, updated.roomNumber ?? undefined, d.newCheckoutAt); log.info("universal: update", { source: d.source, room: d.room, newRoom: d.newRoom, newCheckout: d.newCheckoutAt });
   return { ok: true, sessionId: updated.id, room: updated.roomNumber, checkoutAt: updated.checkOutDate };
 }
 
