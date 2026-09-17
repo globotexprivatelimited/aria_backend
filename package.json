@@ -4,6 +4,7 @@
     "type": "commonjs",
     "main": "dist/server.js",
     "scripts": {
+        "postinstall": "prisma generate",
         "dev": "tsx watch src/server.ts",
         "test": "jest",
         "prisma:generate": "prisma generate",
