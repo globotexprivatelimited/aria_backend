@@ -23,7 +23,40 @@ export type ExecutionResult = {
   bookings: number;
   escalated: boolean;
   blocked: string[];
+  deduped: number;
 };
+
+// A follow-up message must not re-create a request that is still open (D-033, D-046).
+const DEDUP_WINDOW_MINUTES = Number(process.env.REQUEST_DEDUP_MINUTES ?? 90);
+const DEDUP_SIMILARITY = 0.5;
+const NUMBER_WORDS: Record<string, string> = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", a: "1", an: "1" };
+const STOP = new Set(["the", "to", "for", "please", "guest", "guests", "wants", "want", "would", "like", "requests", "requested", "request", "needs", "need", "asks", "asked", "delivered", "delivery", "send", "sent", "bring", "in", "of", "and", "my", "their", "room", "up"]);
+
+function detailTokens(s: string): Set<string> {
+  return new Set(
+    s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+      .map((w) => NUMBER_WORDS[w] ?? w)
+      .filter((w) => w && !STOP.has(w) && !/^\d{3,4}$/.test(w)) // drop room numbers
+  );
+}
+function detailSimilarity(a: string, b: string): number {
+  const ta = detailTokens(a), tb = detailTokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let shared = 0;
+  for (const t of ta) if (tb.has(t)) shared++;
+  return shared / new Set([...ta, ...tb]).size;
+}
+
+/** An open request for the same guest, same intent, recent, and describing the same thing. */
+async function findOpenDuplicate(hotelId: string, sessionId: string, intent: string, dept: Dept, detail: string) {
+  const since = new Date(Date.now() - DEDUP_WINDOW_MINUTES * 60 * 1000);
+  const open = await prisma.request.findMany({
+    where: { hotelId, sessionId, intent: intent as never, department: dept as never, status: { in: ["received", "in_progress"] }, createdAt: { gte: since } },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+  return open.find((o) => detailSimilarity(o.requestDetail ?? "", detail) >= DEDUP_SIMILARITY) ?? null;
+}
 
 /** Find the staff contact who should hear about this department. */
 async function departmentContact(hotelId: string, dept: Dept) {
@@ -43,7 +76,7 @@ export async function executeRequests(
   guestPhone: string,
   messageId: string
 ): Promise<ExecutionResult> {
-  const result: ExecutionResult = { created: 0, bookings: 0, escalated: false, blocked: [] };
+  const result: ExecutionResult = { created: 0, bookings: 0, escalated: false, blocked: [], deduped: 0 };
   // warm the per-hotel department mode cache so GM overrides apply to this request
   await loadDeptModes(hotel.hotelId);
 
@@ -77,6 +110,14 @@ export async function executeRequests(
     if (r.intent === "dining") {
       await createDiningBooking(hotel, session, guestPhone, r.detail, r.quantity, r.whenText);
       result.bookings += 1;
+      continue;
+    }
+
+    // Still-open request that says the same thing? Then this is a follow-up, not a new ask (D-033, D-046).
+    const dup = await findOpenDuplicate(hotel.hotelId, session.id, r.intent, dept, r.detail);
+    if (dup) {
+      result.deduped += 1;
+      log.info("executor: duplicate request skipped", { existingId: dup.id, intent: r.intent, detail: r.detail });
       continue;
     }
 

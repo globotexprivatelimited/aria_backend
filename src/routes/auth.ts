@@ -23,11 +23,14 @@ authRouter.get("/api/auth/me", async (req, res) => {
 // GM/admin sets a staff member's password in OUR auth system (by email), behind admin key
 import { prisma as _prisma } from "../db";
 import bcrypt2 from "bcryptjs";
+import { validatePassword } from "../lib/security";
 authRouter.post("/api/auth/set-password", async (req, res) => {
   const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
   if (req.header("x-admin-key") !== ADMIN_KEY) return res.status(401).json({ ok: false, error: "unauthorized" });
   const { email, password, hotelId } = req.body ?? {};
   if (!email || !password) return res.status(400).json({ ok: false, error: "email, password required" });
+  const weak = validatePassword(password, email);
+  if (weak) return res.status(400).json({ ok: false, error: weak });
   try {
     const hash = await bcrypt2.hash(password, 10);
     // tenant-guard: only set within the same hotel if hotelId provided

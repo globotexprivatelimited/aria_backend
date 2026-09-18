@@ -796,6 +796,17 @@ function opener(reply: string, mentions: string[], guestName: string | null, ord
 
 const NO = ["no", "nah", "nope", "cancel", "nahi", "nai", "na", "not now", "no thanks", "leave it"];
 
+// D-055: an explicit cancel is never read as a yes to a pending offer.
+const CANCEL_WORDS = /\b(cancel|cancle|cancell|cancelled|call off|rad karo|rad kar do|cancel karo|cancel kar do|band karo|batil)\b/i;
+const CANCEL_SCRIPT = ["\u0930\u0926\u094d\u0926", "\u09ac\u09be\u09a4\u09bf\u09b2"]; // Hindi radd, Bengali batil
+export function isCancelIntent(message: string): boolean {
+  const m = message.trim();
+  if (!m) return false;
+  if (CANCEL_WORDS.test(m)) return true;
+  const low = m.toLowerCase();
+  return CANCEL_SCRIPT.some((t) => low.includes(t));
+}
+
 /**
  * A short, unambiguous answer to a pending offer is handled without the model - "yes", "2",
  * "the paneer" come back in well under a second. Anything longer goes to the model, which still
@@ -888,18 +899,20 @@ const MAINT_HINTS: { words: string[]; category: RegExp }[] = [
 ];
 
 /** Which maintenance service covers what the guest described, if any. */
-function matchMaintenance(detail: string, catalog: Catalog): CatalogItem | null {
+/** byName is true only when the guest's words match the service itself, not merely its category (D-038). */
+function matchMaintenance(detail: string, catalog: Catalog): { item: CatalogItem; byName: boolean } | null {
   const pool = catalog.items.filter((i) => i.dept === "maintenance" && i.available);
   if (pool.length === 0) return null;
   const t = " " + normalise(detail) + " ";
   const hint = MAINT_HINTS.find((h) => h.words.some((w) => t.includes(" " + w + " ")));
-  let best: { item: CatalogItem; score: number } | null = null;
+  let best: { item: CatalogItem; score: number; byName: boolean } | null = null;
   for (const item of pool) {
-    let score = Math.max(similarity(detail, item.name), item.description ? similarity(detail, item.description) * 0.8 : 0);
+    const nameScore = Math.max(similarity(detail, item.name), item.description ? similarity(detail, item.description) * 0.8 : 0);
+    let score = nameScore;
     if (hint && ((item.category && hint.category.test(item.category)) || hint.category.test(item.name))) score += 0.5;
-    if (!best || score > best.score) best = { item, score };
+    if (!best || score > best.score) best = { item, score, byName: nameScore >= 0.35 };
   }
-  return best && best.score >= 0.35 ? best.item : null;
+  return best && best.score >= 0.35 ? { item: best.item, byName: best.byName } : null;
 }
 
 function within(from: string | null, to: string | null, time: string): boolean {
@@ -921,7 +934,7 @@ async function tablesTaken(hotelId: string, date: string, sitting: CatalogItem |
 /* ---------------------------------------------------------------- applying --------- */
 
 type Ask = { text: string; qty: number; code?: string };
-type Confirmed = { item: CatalogItem; qty: number };
+type Confirmed = { item: CatalogItem; qty: number; wanted?: number };
 type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[]; generic?: boolean; browse?: boolean };
 type Ambiguous = { ask: string; qty: number; options: CatalogItem[] };
 const AMBIGUITY_GAP = 0.1;
@@ -977,9 +990,11 @@ function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confir
       unavailable.push({ ask: ask.text, item, reason: a.reason, suggestions: suggest(item.name, dept, catalog, new Set([item.id]), item) });
       continue;
     }
+    // stock caps the quantity; remember what was asked so the guest is told, never silently short-changed (D-044)
     const qty = item.stock > 0 ? Math.min(ask.qty, item.stock) : ask.qty;
     const existing = confirmed.find((c) => c.item.id === item!.id);
-    if (existing) existing.qty += qty; else confirmed.push({ item, qty });
+    if (existing) { existing.qty += qty; existing.wanted = (existing.wanted ?? 0) + ask.qty; }
+    else confirmed.push({ item, qty, wanted: ask.qty });
   }
   return { confirmed, unavailable, ambiguous };
 }
@@ -1067,6 +1082,9 @@ function foodSummary(room: string | null, confirmed: Confirmed[], unavailable: U
     const total = confirmed.reduce((s, c) => s + c.item.price * c.qty, 0);
     const prep = Math.max(0, ...confirmed.map((c) => c.item.prepMins));
     lines.push("Total " + money(total) + (prep ? ". About " + prep + " minutes." : "."));
+    for (const c of confirmed) {
+      if (c.wanted && c.wanted > c.qty) lines.push("You asked for " + c.wanted + " x " + c.item.name + " but only " + c.qty + " are available right now, so I have placed " + c.qty + ". Shall I ask the kitchen whether more can be arranged?");
+    }
   }
   for (const u of unavailable) lines.push((lines.length ? "\n" : "") + unavailableText(u, "fb"));
   for (const a of ambiguous) lines.push((lines.length ? "\n" : "") + ambiguityText(a, "fb"));
@@ -1130,7 +1148,14 @@ export async function applyCatalog(
   let ordered = false;
   let deadEnd: CatalogDept | null = null;
   const placedItems: CatalogItem[] = [];
-  const pending = opts.pending ?? null;
+  // D-055: a cancel message ignores any pending offer and can never place a new order or booking
+  const cancelling = isCancelIntent(opts.message ?? "");
+  const pending = cancelling ? null : opts.pending ?? null;
+  if (cancelling) {
+    const others = output.requests.filter((r) => r.intent !== "room_service" && r.intent !== "spa" && r.intent !== "dining" && r.intent !== "activities");
+    const hasHandoff = others.some((r) => r.intent === "concierge");
+    output = { ...output, requests: hasHandoff ? others : [...others, { intent: "concierge", detail: "Cancellation request: " + (opts.message ?? "").trim().slice(0, 200), priority: "human_required" }], needsHuman: true };
+  }
 
   const tz = catalog.timezone, now = catalog.now;
   const modeOf = (dept: string) => opts.deptModes?.[dept] ?? (dept === "fb" || dept === "housekeeping" ? "auto" : dept === "maintenance" ? "maintenance" : "accept_decline");
@@ -1326,13 +1351,19 @@ export async function applyCatalog(
   // ---------------- maintenance: promise the response the GM configured, never refuse ----------------
   if (mtRequests.length) {
     for (const r of mtRequests) {
-      const svc = matchMaintenance(r.detail + " " + (opts.message ?? ""), catalog);
-      if (!svc) { kept.push(r); continue; }
+      const match = matchMaintenance(r.detail + " " + (opts.message ?? ""), catalog);
+      if (!match) { kept.push(r); continue; }
+      const svc = match.item;
       ordered = true;
       const urgent = /emergen|same/i.test(svc.urgency ?? "") || r.priority === "urgent";
-      kept.push({ ...r, intent: "maintenance", detail: "Maintenance: " + svc.name + (svc.category ? " (" + svc.category + ")" : "") + " - " + r.detail, priority: urgent ? "urgent" : r.priority });
+      // D-038: name the configured service only when the guest actually asked for it; a category-only
+      // match (a TV remote routed to the electrical team) is labelled by the real issue, never as "AC service".
+      const label = match.byName
+        ? "Maintenance: " + svc.name + (svc.category ? " (" + svc.category + ")" : "") + " - " + r.detail
+        : "Maintenance" + (svc.category ? " (" + svc.category + ")" : "") + ": " + r.detail;
+      kept.push({ ...r, intent: "maintenance", detail: label, priority: urgent ? "urgent" : r.priority });
       summaries.push((svc.category ? "Our " + svc.category.toLowerCase() + " team" : "Our maintenance team") + (svc.responseMins ? " will be with you" + (room ? " in Room " + room : "") + " within " + svc.responseMins + " minutes." : " is on it and will be with you" + (room ? " in Room " + room : "") + " shortly."));
-      mentions.push(svc.name);
+      if (match.byName) mentions.push(svc.name);
     }
   }
 
@@ -1385,7 +1416,7 @@ export async function applyCatalog(
   }
   if (!opts.dryRun) {
     if (nextContext) await saveGuestContext(hotelId, guestPhone, nextContext);
-    else if (touchedFood || touchedSpa || declined || diningRequests.length || (pending && pending.kind !== "choose" && ordered)) await clearGuestContext(hotelId, guestPhone);
+    else if (cancelling || touchedFood || touchedSpa || declined || diningRequests.length || (pending && pending.kind !== "choose" && ordered)) await clearGuestContext(hotelId, guestPhone);
   }
 
   const extra = summaries.filter(Boolean).join("\n\n");

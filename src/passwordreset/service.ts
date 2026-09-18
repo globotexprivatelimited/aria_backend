@@ -1,5 +1,6 @@
 ﻿import { prisma } from "../db";
 import bcrypt from "bcryptjs";
+import { validatePassword } from "../lib/security";
 import crypto from "crypto";
 import { sendPasswordResetEmail } from "../lib/mailer";
 
@@ -52,6 +53,8 @@ export async function validateResetToken(token: string): Promise<Result<{ valid:
 // set the new password using a valid token
 export async function performReset(token: string, newPassword: string): Promise<Result<{ done: boolean }>> {
   if (!token || !newPassword) return { ok: false, error: "Token and new password required." };
+  const weak = validatePassword(newPassword);
+  if (weak) return { ok: false, error: weak };
   if (newPassword.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(

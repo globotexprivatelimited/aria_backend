@@ -30,7 +30,6 @@ import { missedDemandRouter } from "./routes/misseddemand";
 import { emailVerifyRouter } from "./routes/emailverify";
 import { founderRouter } from "./routes/founder";
 import { slotBookingRouter } from "./routes/slotbooking";
-import { aisensyProbeRouter } from "./routes/aisensyprobe";
 import { passwordResetRouter } from "./routes/passwordreset";
 import { runSelfHealing } from "./session/selfHealing";
 import { runRetentionPurge } from "./privacy/retention";
@@ -41,6 +40,9 @@ import { log } from "./lib/logger";
 import { errorHandler, notFound } from "./lib/errors";
 import { checkReady, installShutdown, inFlightCount } from "./lib/lifecycle";
 import { queueDepth } from "./lib/queue";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { tenantGuard, isPlaceholderSecret } from "./lib/security";
 
 dotenv.config();
 
@@ -50,12 +52,15 @@ app.disable("x-powered-by");
 // a production deploy must not fall back to the development secrets
 if (process.env.NODE_ENV === "production") {
   const weak: string[] = [];
-  if (!process.env.ADMIN_API_KEY || process.env.ADMIN_API_KEY === "dev-admin-key") weak.push("ADMIN_API_KEY");
-  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 24) weak.push("JWT_SECRET");
+  if (isPlaceholderSecret(process.env.ADMIN_API_KEY)) weak.push("ADMIN_API_KEY");
+  if (isPlaceholderSecret(process.env.JWT_SECRET)) weak.push("JWT_SECRET");                  // D-023: a long placeholder is still a placeholder
+  if (isPlaceholderSecret(process.env.META_VERIFY_TOKEN, 16)) weak.push("META_VERIFY_TOKEN"); // D-012
+  if (!process.env.META_APP_SECRET) weak.push("META_APP_SECRET");                             // D-001: needed to verify webhooks
   if (weak.length) {
-    console.error("Refusing to start: set a strong " + weak.join(" and ") + " before deploying.");
+    console.error("Refusing to start: set a strong, non-placeholder " + weak.join(", ") + " before deploying.");
     process.exit(1);
   }
+  app.set("trust proxy", 1); // Render sits behind a proxy; needed for correct per-client rate limiting
 }
 
 const allowedOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000,http://localhost:3001")
@@ -68,7 +73,22 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: "1mb" }));
+// D-013: standard security headers. CSP is off because this is a JSON API behind CORS, not a website.
+app.use(helmet({ contentSecurityPolicy: false }));
+// keep the raw bytes so the Meta webhook can verify X-Hub-Signature-256 (D-001)
+app.use(express.json({ limit: "1mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf); } }));
+
+// D-007: rate limiting. Generous on the API, tight on login. The Meta webhook is exempt - Meta bursts and retries.
+const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: Number(process.env.RATE_LIMIT_PER_MINUTE ?? 300), standardHeaders: "draft-7", legacyHeaders: false });
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, limit: Number(process.env.LOGIN_ATTEMPTS_PER_15_MIN ?? 10), standardHeaders: "draft-7", legacyHeaders: false,
+  message: { ok: false, error: "Too many attempts. Please try again in 15 minutes." },
+});
+app.use("/api", apiLimiter);
+app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth/set-password", loginLimiter);
+// D-005: a signed-in staff member may only touch their own hotel (founders see all)
+app.use("/api", tenantGuard);
 
 app.use((req, res, next) => {
   const started = Date.now();
@@ -122,9 +142,16 @@ app.use(missedDemandRouter);
 app.use(emailVerifyRouter);
 app.use(founderRouter);
 app.use(slotBookingRouter);
-app.use(aisensyProbeRouter);
 app.use(passwordResetRouter);
 
+// D-010: the API map is not public in production
+const docsGuard = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (process.env.NODE_ENV !== "production") return next();
+  if (req.header("x-admin-key") === process.env.ADMIN_API_KEY) return next();
+  res.status(401).json({ error: "unauthorized" });
+};
+app.use("/docs", docsGuard);
+app.use("/openapi.json", docsGuard);
 app.use(
   "/docs",
   swaggerUi.serve,

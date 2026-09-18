@@ -95,6 +95,13 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     // everything the brain needs, fetched at once rather than one after another
     const [deptModeEntries, catalog, pending, history] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId)]);
     const deptModes = Object.fromEntries(deptModeEntries);
+    // a bare thanks, ok, punctuation or emoji carries no request: answer it without the model (D-034)
+    // and never give the model a chance to re-file earlier requests (D-033)
+    if (!pending && isTrivialMessage(body)) {
+      await sendReply(guestPhone, trivialReply(body), hotel.hotelId);
+      log.info("trivial message - AI skipped", { phone: guestPhone });
+      return;
+    }
     // a plain answer to an offer Aria just made needs no model call at all
     const fast = fastPath(body, pending, catalog);
     const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending) }, session, { history });
@@ -116,6 +123,23 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
       escalated: exec.escalated,
     });
   });
+}
+
+const FILLERS = new Set(["ok", "okay", "k", "kk", "thanks", "thank you", "thankyou", "thx", "ty", "cool", "great", "nice", "fine", "hmm", "hm", "sure", "done", "noted", "got it", "alright", "okk", "okie", "shukriya", "dhanyavad", "dhonnobad", "thik hai", "theek hai", "thik ache"]);
+
+/** True for a message with no request in it: only punctuation or emoji, or a bare acknowledgement. */
+export function isTrivialMessage(body: string): boolean {
+  const t = body.trim().toLowerCase();
+  if (!t) return true;
+  if (!/[\p{L}\p{N}]/u.test(t)) return true;              // "...", "!!", emoji walls
+  const words = t.replace(/[^\p{L}\p{N}\s]/gu, " ").trim().replace(/\s+/g, " ");
+  return FILLERS.has(words);
+}
+
+export function trivialReply(body: string): string {
+  return /thank|thx|\bty\b|shukriya|dhanyavad|dhonnobad/i.test(body)
+    ? "You're very welcome - I'm here whenever you need anything."
+    : "I'm here whenever you need anything during your stay - just say the word.";
 }
 
 /** Find the hotel a webhook token belongs to. */

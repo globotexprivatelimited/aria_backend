@@ -3,7 +3,8 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";
-const TOKEN_TTL = "30d";
+// A staff token now lives 24 hours by default (was 30 days with no revocation - D-011). Override with JWT_TTL.
+const TOKEN_TTL = process.env.JWT_TTL ?? "24h";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 export type SessionUser = { staffUserId: string; role: string; hotelId: string; fullName: string; email: string };
@@ -29,7 +30,7 @@ export async function login(email: string, password: string): Promise<Result<{ t
     const ok = await bcrypt.compare(password, u.password_hash);
     if (!ok) return { ok: false, error: "Invalid email or password." };
     const user: SessionUser = { staffUserId: u.id, role: u.role, hotelId: u.hotel_id, fullName: u.full_name ?? "", email: u.email };
-    const token = jwt.sign(user, JWT_SECRET, { expiresIn: TOKEN_TTL });
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: TOKEN_TTL as jwt.SignOptions["expiresIn"] });
     return { ok: true, data: { token, user } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Login failed." }; }
 }

@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import bcrypt from "bcryptjs";
+import { validatePassword } from "../lib/security";
 import { randomUUID } from "crypto";
 
 // Atomically allocate the next hotel number (1, 2, 3...). Single UPDATE ... RETURNING is
@@ -17,6 +18,8 @@ type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 async function createLogin(email: string, password: string, role: string, hotelId: string, fullName: string, phone?: string): Promise<Result<{ authUserId: string }>> {
   // OUR auth: no Supabase Auth. Generate an id, store email + bcrypt password_hash on staff_users.
   if (!email || !password) return { ok: false, error: "Email and password are required." };
+  const weak = validatePassword(password, email);
+  if (weak) return { ok: false, error: weak };
   // reject duplicate email
   const existing = await prisma.$queryRawUnsafe<{ id: string }[]>(`select id from staff_users where lower(email) = lower($1) limit 1`, email);
   if (existing && existing.length > 0) return { ok: false, error: "An account with this email already exists." };
@@ -142,6 +145,8 @@ export async function listStaff(hotelId: string): Promise<Result<{ id: string; f
 
 // GM resets one of their own staff's password (hotelId guard ensures cross-tenant safety)
 export async function resetStaffPassword(hotelId: string, staffId: string, newPassword: string): Promise<Result<{ email: string }>> {
+  const weak = validatePassword(newPassword);
+  if (weak) return { ok: false, error: weak };
   if (!newPassword || newPassword.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
   try {
     // confirm this staffer belongs to this hotel, get their auth_user_id
