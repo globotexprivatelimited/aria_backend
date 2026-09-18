@@ -31,8 +31,9 @@ export function deptType(dept: Dept, hotelId?: string): DeptType {
 }
 
 /** What the guest hears the instant the request lands, before any human acts. */
-export function acknowledgementFor(dept: Dept, detail: string): string {
-  switch (deptType(dept)) {
+export function acknowledgementFor(dept: Dept, detail: string, hotelId?: string): string {
+  // D-017: honour the GM's per-hotel mode override, same as the live executor path
+  switch (deptType(dept, hotelId)) {
     case "auto":
       return dept === "fb"
         ? "Order placed - it is on its way to your room."
@@ -46,8 +47,8 @@ export function acknowledgementFor(dept: Dept, detail: string): string {
 }
 
 /** Which staff actions are valid for a department's type. */
-export function validActions(dept: Dept): string[] {
-  switch (deptType(dept)) {
+export function validActions(dept: Dept, hotelId?: string): string[] {
+  switch (deptType(dept, hotelId)) {
     case "auto":
       return ["CLAIM", "DONE", "PROBLEM"];
     case "maintenance":

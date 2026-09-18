@@ -70,5 +70,11 @@ export function tenantGuard(req: Request, res: Response, next: NextFunction): vo
     res.status(403).json({ ok: false, error: "Not your hotel." });
     return;
   }
+  // D-005: the hotel comes from the verified token, never from the client. Fill it in so routes
+  // that read hotelId from the query or body get the caller's own hotel even when none was sent.
+  if (!asked) {
+    (req.query as Record<string, unknown>).hotelId = String(user.hotelId);
+    if (req.body && typeof req.body === "object") (req.body as Record<string, unknown>).hotelId = String(user.hotelId);
+  }
   next();
 }

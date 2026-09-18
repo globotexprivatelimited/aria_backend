@@ -1,4 +1,5 @@
 ﻿import { prisma } from "../db";
+import { REQUEST_STALE_DAYS } from "../session/selfHealing";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -12,12 +13,14 @@ function norm(r: any) {
 export async function listActiveRequests(hotelId: string, depts: string[]): Promise<Result<any[]>> {
   if (!hotelId || depts.length === 0) return { ok: true, data: [] };
   try {
+    // D-036: the live board shows current work only; anything older is expired by the self-healing job
     const rows = await prisma.$queryRawUnsafe<any[]>(
       `select * from "Request"
        where "hotelId" = $1 and department::text = any($2::text[])
          and status::text in ('received','in_progress')
+         and "createdAt" > now() - ($3 || ' days')::interval
        order by "createdAt" desc`,
-      hotelId, depts
+      hotelId, depts, String(REQUEST_STALE_DAYS)
     );
     return { ok: true, data: rows.map(norm) };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not load requests." }; }
@@ -57,8 +60,9 @@ export async function listHotelActive(hotelId: string): Promise<Result<any[]>> {
   if (!hotelId) return { ok: true, data: [] };
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(
-      `select * from "Request" where "hotelId" = $1 and status::text in ('received','in_progress') order by "createdAt" desc`,
-      hotelId
+      `select * from "Request" where "hotelId" = $1 and status::text in ('received','in_progress')
+         and "createdAt" > now() - ($2 || ' days')::interval order by "createdAt" desc`,
+      hotelId, String(REQUEST_STALE_DAYS)
     );
     return { ok: true, data: rows.map(norm) };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not load." }; }
@@ -68,7 +72,9 @@ export async function listHotelActive(hotelId: string): Promise<Result<any[]>> {
 export async function listAllActive(): Promise<Result<any[]>> {
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(
-      `select * from "Request" where status::text in ('received','in_progress') order by "createdAt" desc limit 1000`
+      `select * from "Request" where status::text in ('received','in_progress')
+         and "createdAt" > now() - ($1 || ' days')::interval order by "createdAt" desc limit 1000`,
+      String(REQUEST_STALE_DAYS)
     );
     return { ok: true, data: rows.map(norm) };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not load." }; }

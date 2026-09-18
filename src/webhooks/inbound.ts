@@ -21,7 +21,7 @@ export type InboundMessage = {
 
 /**
  * Everything that happens to a guest message once it has been unwrapped from
- * whatever provider delivered it. WATI and AiSensy both land here.
+ * the provider that delivered it. Meta Cloud API is the live channel (webhooks/meta.ts).
  */
 export async function handleInboundMessage(hotel: any, msg: InboundMessage): Promise<void> {
   const { messageId } = msg;

@@ -46,6 +46,17 @@ export async function getPortfolio(): Promise<Result<{ hotels: HotelSummary[]; t
            from missed_demand where resolved_by_hotel = false group by hotel_id`);
     } catch { /* table may not exist on older databases */ }
 
+    // D-040: placed room-service orders live in the orders table, not on Request.revenueGenerated
+    let orderRev: any[] = [];
+    try {
+      orderRev = await prisma.$queryRawUnsafe<any[]>(
+        `select hotel_id,
+                coalesce(sum(total),0)::float total,
+                coalesce(sum(case when created_at >= date_trunc('day', now()) then total else 0 end),0)::float today,
+                coalesce(sum(case when created_at >= now() - interval '7 days' then total else 0 end),0)::float week
+           from orders where status::text <> 'cancelled' group by hotel_id`);
+    } catch { /* orders table may not exist on older databases */ }
+
     const out: HotelSummary[] = hotels.map((h) => {
       const id = String(h.hotelId);
       const rRows = rooms.filter((r) => String(r.hotel_id) === id);
@@ -81,9 +92,9 @@ export async function getPortfolio(): Promise<Result<{ hotels: HotelSummary[]; t
           urgent: qRows.filter((r) => r.priority === "urgent" && r.status !== "resolved").length,
         },
         revenue: {
-          today: qRows.filter((r) => r.is_today).reduce((s, r) => s + r.revenue, 0),
-          week: qRows.filter((r) => r.is_week).reduce((s, r) => s + r.revenue, 0),
-          total: qRows.reduce((s, r) => s + r.revenue, 0),
+          today: qRows.filter((r) => r.is_today).reduce((s, r) => s + r.revenue, 0) + Number(orderRev.find((o) => String(o.hotel_id) === id)?.today ?? 0),
+          week: qRows.filter((r) => r.is_week).reduce((s, r) => s + r.revenue, 0) + Number(orderRev.find((o) => String(o.hotel_id) === id)?.week ?? 0),
+          total: qRows.reduce((s, r) => s + r.revenue, 0) + Number(orderRev.find((o) => String(o.hotel_id) === id)?.total ?? 0),
         },
         missed: { count: m?.n ?? 0, estimatedLoss: m?.loss ?? 0 },
         lastActivity: latest,
@@ -164,6 +175,17 @@ export async function getHotelDetail(hotelId: string): Promise<Result<HotelDetai
          from "Request" where "hotelId" = $1 and "createdAt" > now() - interval '30 days'
         order by "createdAt" desc limit 200`, hotelId);
 
+    // D-040: room-service orders count as revenue for this hotel
+    let ord = { today: 0, week: 0, month: 0, total: 0 };
+    try {
+      const o = await prisma.$queryRawUnsafe<any[]>(
+        `select coalesce(sum(case when created_at >= date_trunc('day', now()) then total else 0 end),0)::float today,
+                coalesce(sum(case when created_at >= now() - interval '7 days' then total else 0 end),0)::float week,
+                coalesce(sum(case when created_at >= now() - interval '30 days' then total else 0 end),0)::float month,
+                coalesce(sum(total),0)::float total
+           from orders where hotel_id = $1 and status::text <> 'cancelled'`, hotelId);
+      if (o[0]) ord = { today: Number(o[0].today), week: Number(o[0].week), month: Number(o[0].month), total: Number(o[0].total) };
+    } catch {}
     let modes: any[] = [];
     try { modes = await prisma.$queryRawUnsafe<any[]>(`select dept, mode from dept_config where hotel_id = $1`, hotelId); } catch {}
     let items: any[] = [];
@@ -223,11 +245,11 @@ export async function getHotelDetail(hotelId: string): Promise<Result<HotelDetai
       })),
       missed: missedRows.map((m) => ({ item: m.requested_item, department: m.department ?? null, times: m.n, loss: Number(m.loss ?? 0) })),
       revenue: {
-        today: reqRows.filter((r) => new Date(r.createdAt) >= startDay).reduce((s, r) => s + r.revenue, 0),
-        week: reqRows.filter((r) => inRange(r.createdAt, 7)).reduce((s, r) => s + r.revenue, 0),
-        month: reqRows.reduce((s, r) => s + r.revenue, 0),
-        total: reqRows.reduce((s, r) => s + r.revenue, 0),
-        byDept: deptKeys.map((d) => ({ dept: d, amount: reqRows.filter((r) => r.dept === d).reduce((s, r) => s + r.revenue, 0) })).filter((x) => x.amount > 0),
+        today: reqRows.filter((r) => new Date(r.createdAt) >= startDay).reduce((s, r) => s + r.revenue, 0) + ord.today,
+        week: reqRows.filter((r) => inRange(r.createdAt, 7)).reduce((s, r) => s + r.revenue, 0) + ord.week,
+        month: reqRows.reduce((s, r) => s + r.revenue, 0) + ord.month,
+        total: reqRows.reduce((s, r) => s + r.revenue, 0) + ord.total,
+        byDept: deptKeys.map((d) => ({ dept: d, amount: reqRows.filter((r) => r.dept === d).reduce((s, r) => s + r.revenue, 0) + (d === "fb" ? ord.total : 0) })).filter((x) => x.amount > 0),
       },
     } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "detail failed" }; }
@@ -324,6 +346,16 @@ export async function getInsights(days = 30): Promise<Result<Insights>> {
       e.requests += 1; e.revenue += r.revenue;
       if (r.status === "resolved") e.resolved += 1;
     }
+    // D-040: add placed room-service orders to the daily revenue series
+    try {
+      const ordDays = await prisma.$queryRawUnsafe<any[]>(
+        `select created_at::date d, coalesce(sum(total),0)::float rev from orders
+          where status::text <> 'cancelled' and created_at > now() - ($1 || ' days')::interval group by created_at::date`, String(days));
+      for (const o of ordDays) {
+        const k = new Date(o.d).toISOString().slice(0, 10);
+        const e = byDay.get(k); if (e) e.revenue += Number(o.rev);
+      }
+    } catch {}
     const series = Array.from(byDay.entries()).map(([date, v]) => ({
       date, label: new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" }), ...v,
     }));
@@ -373,11 +405,18 @@ export async function getInsights(days = 30): Promise<Result<Insights>> {
       gaps = g.map((x) => ({ item: x.item, times: x.n, loss: Number(x.loss ?? 0), hotels: x.hotels }));
     } catch {}
 
-    // departments across the platform
+    // departments across the platform (D-040: room-service orders count towards fb)
+    let ordWindow = 0;
+    try {
+      const o = await prisma.$queryRawUnsafe<any[]>(
+        `select coalesce(sum(total),0)::float rev from orders where status::text <> 'cancelled' and created_at > now() - ($1 || ' days')::interval`, String(days));
+      ordWindow = Number(o[0]?.rev ?? 0);
+    } catch {}
     const depts = Array.from(new Set(reqs.map((r) => r.dept).filter(Boolean)));
+    if (ordWindow > 0 && !depts.includes("fb")) depts.push("fb");
     const byDepartment = depts.map((d) => {
       const dr = reqs.filter((r) => r.dept === d);
-      return { dept: d, requests: dr.length, revenue: dr.reduce((s, r) => s + r.revenue, 0), declined: dr.filter((r) => r.declined).length };
+      return { dept: d, requests: dr.length, revenue: dr.reduce((s, r) => s + r.revenue, 0) + (d === "fb" ? ordWindow : 0), declined: dr.filter((r) => r.declined).length };
     }).sort((a, b) => b.requests - a.requests);
 
     const activity = reqs.slice(0, 25).map((r) => ({

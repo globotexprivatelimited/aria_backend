@@ -4,9 +4,8 @@ import dotenv from "dotenv";
 import cron from "node-cron";
 import swaggerUi from "swagger-ui-express";
 import { openapiSpec } from "./lib/openapi";
-import { watiRouter } from "./webhooks/wati";
-import { aisensyRouter } from "./webhooks/aisensy";
 import { metaRouter } from "./webhooks/meta";
+import { hotelSettingsRouter } from "./routes/hotelsettings";
 import { adminRouter } from "./webhooks/admin";
 import { frontdeskRouter } from "./routes/frontdesk";
 import { dashboardRouter } from "./routes/dashboard";
@@ -116,9 +115,9 @@ app.get("/ready", async (_req, res) => {
   });
 });
 
-app.use(watiRouter);
-app.use(aisensyRouter);
+// D-016: the WATI and AiSensy webhook routers are no longer mounted - Meta Cloud API is the only guest channel.
 app.use(metaRouter);
+app.use(hotelSettingsRouter);
 app.use(adminRouter);
 app.use(frontdeskRouter);
 app.use(dashboardRouter);

@@ -39,7 +39,7 @@ function detailTokens(s: string): Set<string> {
       .filter((w) => w && !STOP.has(w) && !/^\d{3,4}$/.test(w)) // drop room numbers
   );
 }
-function detailSimilarity(a: string, b: string): number {
+export function detailSimilarity(a: string, b: string): number {
   const ta = detailTokens(a), tb = detailTokens(b);
   if (ta.size === 0 || tb.size === 0) return 0;
   let shared = 0;
@@ -110,6 +110,12 @@ export async function executeRequests(
     if (r.intent === "dining") {
       await createDiningBooking(hotel, session, guestPhone, r.detail, r.quantity, r.whenText);
       result.bookings += 1;
+      continue;
+    }
+
+    // D-037: a request with no description is unactionable for staff - never create one.
+    if (!r.detail || !r.detail.trim()) {
+      log.warn("executor: request skipped - no detail", { intent: r.intent, phone: guestPhone });
       continue;
     }
 

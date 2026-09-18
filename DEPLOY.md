@@ -16,8 +16,11 @@ Recommended: Railway, Render, or Fly.io.
 
 ## After deploy
 
-- Point the Wati webhook at `https://<your-host>/webhooks/wati/<hotelWebhookToken>`.
-- Point the staff/admin channel at `https://<your-host>/webhooks/admin/<hotelWebhookToken>`.
+- In the Meta App Dashboard (WhatsApp > Configuration) set the callback URL to
+  `https://<your-host>/webhooks/meta`, the verify token to `META_VERIFY_TOKEN`, and
+  subscribe to the `messages` field. Set `META_APP_SECRET` so signatures verify.
+- Each hotel's `Hotel.whatsapp_phone_id` must match the phone_number_id Meta sends.
+- See README.md for the runbook (redeploy, rollback, rotate keys, add a hotel).
 - Confirm `GET /health` returns ok and `GET /ready` reports `db: true`.
 
 ## Notes
