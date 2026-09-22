@@ -8,7 +8,6 @@ import { eraseGuestData } from "../privacy/erasure";
 import { loadDeptModes } from "../deptconfig/service";
 import { sendReply } from "../lib/notify";
 import { sendTypingIndicator } from "../lib/meta";
-import { sendTypingIndicator } from "../lib/meta";
 import { log } from "../lib/logger";
 import { understand } from "../brain";
 import { executeRequests } from "../executor";
@@ -66,7 +65,6 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
   if (type === "text") void sendTypingIndicator(messageId, hotel.hotelId);
 
   // show the guest "typing..." straight away, so a reply that takes a few seconds still feels live
-  if (type === "text") void sendTypingIndicator(messageId, hotel.hotelId);
 
   enqueue(hotel.hotelId + ":" + guestPhone, async () => {
     if (isWithdrawalKeyword(body)) {
