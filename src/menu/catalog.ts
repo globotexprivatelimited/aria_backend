@@ -1493,7 +1493,7 @@ export function verifyReply(reply: string, catalog: Catalog): string {
   for (const item of catalog.items) {
     if (!item.name || !(item.price > 0)) continue;
     const name = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp("(" + name + "\\*?\\s*[(\\-\\u2013:]?\\s*)(?:\\u20B9|Rs\\.?|INR)\\s?([\\d,]+(?:\\.\\d+)?)", "gi");
+    const re = new RegExp("(" + name + "\\*?\\s*[(\\-\\u2013:]?\\s*)(?:\\u20B9|\\bRs\\.?|\\bINR)\\s?(\\d[\\d,]*(?:\\.\\d+)?)", "gi");
     out = out.replace(re, (whole: string, pre: string, amount: string) => {
       const n = Number(amount.replace(/,/g, ""));
       if (Math.abs(n - item.price) < 0.5) return whole;
@@ -1516,7 +1516,7 @@ export function guardModelReply(reply: string, catalog: Catalog): string {
   const known = new Set<number>();
   for (const i of catalog.items) if (i.price > 0) for (let k = 1; k <= 10; k++) known.add(Math.round(i.price * k));
   if (!known.size) return reply;
-  const amountRe = /(?:\u20B9|Rs\.?|INR)\s?([\d,]+(?:\.\d+)?)/gi;
+  const amountRe = /(?:\u20B9|\bRs\.?|\bINR)\s?(\d[\d,]*(?:\.\d+)?)/gi;
   const hasUnknown = (s: string) => Array.from(s.matchAll(amountRe)).some((m) => !known.has(Math.round(Number((m[1] ?? "").replace(/,/g, "")))));
   if (!hasUnknown(reply)) return reply;
   const lines = reply.split(/\r?\n/).map((line) => (hasUnknown(line) ? line.split(/(?<=[.!?])\s+/).filter((s) => !hasUnknown(s)).join(" ") : line));

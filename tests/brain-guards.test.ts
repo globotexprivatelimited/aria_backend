@@ -65,3 +65,10 @@ describe("receipts", () => {
     expect(verifyReply(line, catalog)).toBe(line);
   });
 });
+
+describe("reading amounts", () => {
+  test("a word ending in rs is not mistaken for rupees", () => {
+    const line = "- *Pakora* \u20B9120 - hot fritters, made for exactly this kind of weather";
+    expect(guardModelReply(line, catalog)).toBe(line);
+  });
+});
