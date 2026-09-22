@@ -33,7 +33,7 @@ const SAFE_FALLBACK: BrainOutput = {
   needsHuman: true,
 };
 
-type BrainHotel = { name: string; timezone?: string | null; deptModes?: DeptModeMap; catalogText?: string; pendingText?: string };
+type BrainHotel = { name: string; timezone?: string | null; deptModes?: DeptModeMap; catalogText?: string; pendingText?: string; contextText?: string };
 export type BrainTurn = { role: "user" | "assistant"; content: string };
 type BrainSession = { roomNumber?: string | null; claimedGuestName?: string | null; roomVerified?: boolean };
 
@@ -66,7 +66,7 @@ export async function understand(
     return { output: SAFE_FALLBACK, usedFallback: true };
   }
 
-  const system = buildSystemPrompt(hotel, session, hotel.deptModes, hotel.catalogText, hotel.pendingText);
+  const system = buildSystemPrompt(hotel, session, hotel.deptModes, hotel.catalogText, hotel.pendingText, hotel.contextText);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {

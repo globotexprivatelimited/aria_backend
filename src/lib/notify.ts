@@ -5,6 +5,11 @@ import { prisma } from "../db";
 /** Message a guest. Falls back to logging when WhatsApp is not configured. */
 export async function sendReply(phone: string, text: string, hotelId: string): Promise<void> {
   log.info("outbound reply", { phone, hotelId, body: text });
+  // the same text twice in a row is never what a guest wants, whatever upstream retried or doubled
+  try {
+    const twin = await prisma.message.findFirst({ where: { hotelId, guestPhone: phone, direction: "outbound", body: text, createdAt: { gt: new Date(Date.now() - 120000) } }, select: { id: true } });
+    if (twin) { log.warn("outbound reply suppressed - identical text sent to this guest moments ago", { phone, hotelId }); return; }
+  } catch { /* the guard must never block a reply */ }
 
   if (isMetaConfigured()) {
     await sendWhatsAppMessage(phone, text, hotelId);

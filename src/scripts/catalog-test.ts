@@ -2,6 +2,7 @@ import "dotenv/config";
 import { prisma } from "../db";
 import { loadCatalog, applyCatalog } from "../menu/catalog";
 import { understand } from "../brain";
+import { suggestionsForPrompt, loadGuestHistory } from "../menu/catalog";
 import { loadDeptModes } from "../deptconfig/service";
 
 /**
@@ -21,7 +22,7 @@ async function main() {
   const deptModes = Object.fromEntries(await loadDeptModes(hotelId));
   const { output, usedFallback } = await understand(
     text,
-    { name: hotel.name, timezone, deptModes, catalogText: catalog.promptText },
+    { name: hotel.name, timezone, deptModes, catalogText: catalog.promptText, contextText: suggestionsForPrompt(catalog, await loadGuestHistory(hotel.hotelId, "+910000000000")) },
     { roomNumber: "104", claimedGuestName: "Test Guest", roomVerified: true }
   );
   console.log("--- BRAIN OUTPUT" + (usedFallback ? " (FALLBACK - check ANTHROPIC_API_KEY)" : "") + " ---\n" + JSON.stringify(output, null, 2) + "\n");

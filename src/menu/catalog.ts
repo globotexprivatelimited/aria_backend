@@ -813,7 +813,7 @@ export function isCancelIntent(message: string): boolean {
  * sees the offer and the thread.
  */
 export function fastPath(message: string, pending: GuestContext | null, catalog: Catalog): BrainOutput | null {
-  if (isMenuQuestion(message)) {
+  if (isMenuQuestion(message) && !hasQualifier(message)) {
     const dept = menuDeptFor(message, catalog);
     if (dept) return { requests: [], reply: "Of course.", showMenu: dept === "spa" ? "spa" : "fb", sentiment: "neutral", needsHuman: false };
   }
@@ -1157,6 +1157,10 @@ export async function applyCatalog(
     output = { ...output, requests: hasHandoff ? others : [...others, { intent: "concierge", detail: "Cancellation request: " + (opts.message ?? "").trim().slice(0, 200), priority: "human_required" }], needsHuman: true };
   }
 
+  // a reply of a dozen words or more is the model answering the guest itself - the server then adds receipts only, never a second answer
+  // the model answered the guest itself when it says so, or when this was a menu question it chose to answer in prose rather than defer to the grouped menu
+  const composed = output.answeredMenu === true || (!output.showMenu && !!opts.message && isMenuQuestion(opts.message) && output.requests.length === 0);
+  // a reply of a dozen words or more is the model answering the guest itself - the server then adds receipts only, never a second answer
   const tz = catalog.timezone, now = catalog.now;
   const modeOf = (dept: string) => opts.deptModes?.[dept] ?? (dept === "fb" || dept === "housekeeping" ? "auto" : dept === "maintenance" ? "maintenance" : "accept_decline");
   const foodRequests = output.requests.filter((r) => r.intent === "room_service" && catalog.configured.fb);
@@ -1205,7 +1209,7 @@ export async function applyCatalog(
       });
     }
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "fb", room, guestPhone, unavailable);
-    summaries.push(foodSummary(room, placed, unavailable, ambiguous));
+    summaries.push(foodSummary(room, placed, composed ? unavailable.filter((u) => !replyMentions(output.reply, u.ask)) : unavailable, ambiguous));
     if (!placed.length && !ambiguous.length && unavailable.length && unavailable.every((u) => u.suggestions.length === 0)) deadEnd = "fb";
     mentions.push(...placed.map((c) => c.item.name), ...unavailable.map((u) => u.ask), ...unavailable.flatMap((u) => u.suggestions.map((s) => s.name)));
     nextContext = offerFrom(ambiguous, unavailable, "fb", 1);
@@ -1388,11 +1392,11 @@ export async function applyCatalog(
   // the menu itself, when asked for - by the model's flag or by the words
   const menuDept: CatalogDept | null = output.showMenu
     ? (output.showMenu === "spa" ? (catalog.configured.spa ? "spa" : null) : (catalog.configured.fb ? "fb" : null))
-    : (opts.message && isMenuQuestion(opts.message) ? menuDeptFor(opts.message, catalog) : null);
-  if (menuDept && !ordered) summaries.push(menuDigest(catalog, menuDept, history));
+    : null;
+  if (menuDept && !ordered && !composed) summaries.push(menuDigest(catalog, menuDept, history));
 
   // a dead end gets a next step: something that suits the moment, then what the hotel does have
-  if (!ordered && !menuDept && deadEnd) {
+  if (!ordered && !menuDept && deadEnd && !composed) {
     const pick = deadEnd === "fb" ? picksFor(catalog, "fb", history, { limit: 1, minScore: 2 })[0] : undefined;
     if (pick) {
       summaries.push("You might enjoy " + pickLine(pick, "fb") + ". Shall I send one up, or would you like to see the menu?");
@@ -1422,10 +1426,58 @@ export async function applyCatalog(
   const extra = summaries.filter(Boolean).join("\n\n");
   if (!extra) {
     const dangling = /\b(below|details)\b/i.test(output.reply);
-    return dangling ? { ...output, requests: kept, reply: output.reply.replace(/[^.!?]*\b(below|details)\b[^.!?]*[.!?]?/gi, "").trim() || "How can I help?" } : { ...output, requests: kept };
+    const cleaned = dangling && !composed ? output.reply.replace(/[^.!?]*\b(below|details)\b[^.!?]*[.!?]?/gi, "").trim() || "How can I help?" : output.reply;
+    return { ...output, requests: kept, reply: verifyReply(cleaned, catalog) };
   }
   let head = opener(output.reply, mentions, session.claimedGuestName ?? null, ordered);
   // a bare apology on top of the server's own apology reads doubled
   if (head && /^(so )?sorry[.!]*$|^apologies[.!]*$/i.test(head.trim()) && /^sorry/i.test(extra)) head = null;
-  return { ...output, requests: kept, reply: head ? head + "\n\n" + extra : extra };
+  return { ...output, requests: kept, reply: verifyReply(head ? head + "\n\n" + extra : extra, catalog) };
+}
+
+/* ---------------------------------------------------------------- composed replies -- */
+
+const QUALIFIERS = ["lunch", "dinner", "breakfast", "brunch", "veg", "vegetarian", "nonveg", "non", "beverage", "beverages", "drink", "drinks", "dessert", "desserts", "starter", "starters", "snack", "snacks", "main", "mains", "spicy", "sweet", "cheap", "cold", "hot", "not", "only", "just", "without", "except", "special", "specials", "today", "tonight", "morning", "evening", "kids", "healthy", "light", "quick", "recommend", "suggest", "good", "best", "hungry"];
+
+/** A menu ask with a qualifier (lunch menu, only drinks, not all) needs judgement, so it goes to the model rather than the fixed digest. */
+function hasQualifier(message: string): boolean {
+  const words = normalise(message).split(" ").filter(Boolean);
+  return words.some((w) => QUALIFIERS.includes(w));
+}
+
+function replyMentions(reply: string, ask: string): boolean {
+  const a = normalise(ask);
+  return a.length > 0 && normalise(reply).includes(a);
+}
+
+/** What the server would recommend right now, and what this guest has had before - facts for the model to reason with. */
+export function suggestionsForPrompt(catalog: Catalog, history: Map<string, number>): string {
+  if (!catalog.configured.fb) return "";
+  const lines: string[] = [];
+  const picks = picksFor(catalog, "fb", history, { limit: 3, minScore: 2 });
+  const avail = catalog.items.filter((i) => i.dept === "fb" && availability(i, catalog.timezone).ok);
+  if (avail.length) lines.push("AVAILABLE IN-ROOM DINING RIGHT NOW (answer menu questions from exactly this list, nothing else): " + avail.map((i) => i.name + " " + money(i.price) + (i.category ? " [" + i.category + "]" : "")).join(", ") + ".");
+  const off = catalog.items.filter((i) => i.dept === "fb" && !availability(i, catalog.timezone).ok);
+  if (off.length) lines.push("NOT AVAILABLE TODAY (mention only if asked for by name): " + off.map((i) => i.name).join(", ") + ".");
+  if (picks.length) lines.push("WHAT SUITS THIS MOMENT (lead with these when recommending, and say why): " + picks.map((p) => itemLabel(p.item, "fb") + " - " + p.reason).join("; "));
+  const before = Array.from(history.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id, n]) => { const it = catalog.items.find((i) => i.id === id); return it ? it.name + (n > 1 ? " (x" + n + ")" : "") : null; }).filter((s): s is string => !!s);
+  if (before.length) lines.push("THIS GUEST HAS ORDERED BEFORE: " + before.join(", ") + " - natural to offer again.");
+  return lines.join("\n");
+}
+
+/** The model may name dishes and prices now, so every price it writes is checked against the catalogue and corrected. */
+function verifyReply(reply: string, catalog: Catalog): string {
+  let out = reply;
+  for (const item of catalog.items) {
+    if (!item.name || !(item.price > 0)) continue;
+    const name = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp("(" + name + "\\s*\\(?\\s*)(?:\\u20B9|Rs\\.?|INR)\\s?([\\d,]+(?:\\.\\d+)?)", "gi");
+    out = out.replace(re, (whole: string, pre: string, amount: string) => {
+      const n = Number(amount.replace(/,/g, ""));
+      if (Math.abs(n - item.price) < 0.5) return whole;
+      log.warn("catalog: price in reply corrected", { item: item.name, written: n, actual: item.price });
+      return pre + money(item.price);
+    });
+  }
+  return out;
 }
