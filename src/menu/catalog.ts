@@ -668,7 +668,7 @@ export function menuDigest(catalog: Catalog, dept: CatalogDept, history: Map<str
 /** What Aria is waiting on from this guest: a choice between items, a spa time, or the details of a table. */
 export type GuestContext =
   | { kind: "choose"; dept: CatalogDept; ask: string; qty: number; options: { code: string; name: string; price: number }[] }
-  | { kind: "slot"; dept: "spa"; itemCode: string; itemName: string; options: { slotId: string; date: string; start: string; label: string }[] }
+  | { kind: "slot"; dept: "spa"; itemCode: string; itemName: string; note?: string; options: { slotId: string; date: string; start: string; label: string }[] }
   | { kind: "dining"; partySize: number | null; date: string | null; time: string | null };
 
 export type BrainTurn = { role: "user" | "assistant"; content: string };
@@ -1224,7 +1224,9 @@ export async function applyCatalog(
     const lines: string[] = [];
     const mode = modeOf("spa");
     // what the guest asked for beyond the treatment itself (a male therapist, an allergy) must reach the spa team, never be dropped
-    const spaNote = (() => { const n = spaRequests.map((r) => r.detail).filter((d) => /\b(male|female|man|woman|lady|gent|therapist|attendant|allerg|pregnan|sensitiv|prefer)/i.test(d)).join("; "); return n ? " - guest note: " + n.slice(0, 160) : ""; })();
+    const spaNoteRaw = spaRequests.map((r) => r.detail).filter((d) => /\b(male|female|man|woman|lady|gent|therapist|attendant|allerg|pregnan|sensitiv|prefer)/i.test(d)).join("; ").slice(0, 160) || (pending && pending.kind === "slot" ? pending.note ?? "" : "");
+
+    const spaNote = spaNoteRaw ? " - guest note: " + spaNoteRaw : "";
     for (const c of confirmed) {
       const item = c.item;
       const hasSlots = catalog.slots.some((s) => s.dept === "spa" && s.active && (s.itemId === item.id || s.itemId === null));
@@ -1257,10 +1259,10 @@ export async function applyCatalog(
         }
         const alt = (offers.length ? offers : await slotOffers(hotelId, catalog, item, [localDate(tz, now, 1), localDate(tz, now, 2), localDate(tz, now, 3)])).slice(0, 3);
         if (alt.length) {
-          lines.push(to12h(when.time) + " " + relDate(date, tz, now) + " is not available for " + item.name + ". " + (alt.length === 1
-            ? "The next free time is " + offerLine(alt[0], tz, now) + " - shall I book that?"
-            : "Free times: " + offersText(alt, tz, now) + ". Which suits you?"));
-          nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, options: alt.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
+          lines.push(to12h(when.time) + " " + relDate(date, tz, now) + " is already taken for the " + item.name + ", I'm afraid. " + (alt.length === 1
+            ? "The nearest free time is " + offerLine(alt[0], tz, now) + " - shall I book that for you?"
+            : "It is free " + offersText(alt, tz, now) + " - which would suit you?"));
+          nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, note: spaNoteRaw || undefined, options: alt.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
         } else {
           ordered = true;
           kept.push({ intent: "spa", detail: "Spa: " + label + spaNote + " - " + whenText + " (no open slot, team to confirm)", priority: "normal", whenText: whenText || undefined });
@@ -1274,7 +1276,7 @@ export async function applyCatalog(
         lines.push(offers.length === 1
           ? "The next free time for " + label + " is " + offerLine(offers[0], tz, now) + ". Shall I book it?"
           : label + " is available " + offersText(offers, tz, now) + ". Which time suits you?");
-        nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, options: offers.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
+        nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, note: spaNoteRaw || undefined, options: offers.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
       } else {
         ordered = true;
         kept.push({ intent: "spa", detail: "Spa: " + label + spaNote + " (no open slot in the next days, team to confirm)", priority: "normal" });
@@ -1282,6 +1284,7 @@ export async function applyCatalog(
       }
       mentions.push(item.name);
     }
+    if (spaNoteRaw && confirmed.length) lines.push("I have passed your preference on to the spa team - they will confirm it with you.");
     for (const u of unavailable) lines.push(unavailableText(u, "spa"));
     for (const a of ambiguous) lines.push(ambiguityText(a, "spa"));
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "spa", room, guestPhone, unavailable);
@@ -1469,7 +1472,13 @@ export function suggestionsForPrompt(catalog: Catalog, history: Map<string, numb
 
 /** The model may name dishes and prices now, so every price it writes is checked against the catalogue and corrected. */
 function verifyReply(reply: string, catalog: Catalog): string {
-  let out = reply;
+  // WhatsApp bold is *single* and it has no headings - markdown slipped in by the model would show as raw symbols
+  let out = reply.replace(/\*\*(.+?)\*\*/g, "*$1*").replace(/^#{1,6}\s+/gm, "");
+  // internal catalog codes (F3, S1) are for the system, never for the guest
+  for (const item of catalog.items) {
+    if (!item.code || !/^[A-Za-z0-9]+$/.test(item.code)) continue;
+    out = out.replace(new RegExp("\\(?\\b" + item.code + "\\b\\s*[-\\u2013:,]?\\s*", "g"), (m: string) => (m.startsWith("(") ? "(" : ""));
+  }
   for (const item of catalog.items) {
     if (!item.name || !(item.price > 0)) continue;
     const name = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
