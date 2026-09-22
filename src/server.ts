@@ -103,7 +103,7 @@ app.use((req, res, next) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "aria-api", commit: (process.env.RENDER_GIT_COMMIT ?? "local").slice(0, 7), time: new Date().toISOString() });
+  res.json({ ok: true, service: "aria-api", commit: (process.env.RENDER_GIT_COMMIT ?? "local").slice(0, 7), brain: Boolean(process.env.ANTHROPIC_API_KEY), model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6", time: new Date().toISOString() });
 });
 
 app.get("/ready", async (_req, res) => {
