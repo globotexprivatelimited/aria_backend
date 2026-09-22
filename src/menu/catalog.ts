@@ -1144,7 +1144,7 @@ export async function applyCatalog(
   hotelId: string,
   session: { roomNumber?: string | null; claimedGuestName?: string | null },
   guestPhone: string,
-  opts: { dryRun?: boolean; pending?: GuestContext | null; message?: string; deptModes?: Record<string, string> } = {}
+  opts: { dryRun?: boolean; persistContext?: boolean; pending?: GuestContext | null; message?: string; deptModes?: Record<string, string> } = {}
 ): Promise<BrainOutput> {
   const room = session.roomNumber ?? null;
   const kept: BrainRequest[] = [];
@@ -1168,6 +1168,7 @@ export async function applyCatalog(
   // a reply of a dozen words or more is the model answering the guest itself - the server then adds receipts only, never a second answer
   // the model answered the guest itself when it says so, or when this was a menu question it chose to answer in prose rather than defer to the grouped menu
   const composed = output.answeredMenu === true || (!output.showMenu && !!opts.message && isMenuQuestion(opts.message) && output.requests.length === 0);
+  output = { ...output, reply: guardModelReply(output.reply, catalog) };
   // a reply of a dozen words or more is the model answering the guest itself - the server then adds receipts only, never a second answer
   const tz = catalog.timezone, now = catalog.now;
   const modeOf = (dept: string) => opts.deptModes?.[dept] ?? (dept === "fb" || dept === "housekeeping" ? "auto" : dept === "maintenance" ? "maintenance" : "accept_decline");
@@ -1431,7 +1432,7 @@ export async function applyCatalog(
       nextContext = { kind: "choose", dept: "fb", ask: "with your order", qty: 1, options: [{ code: pick.item.code, name: pick.item.name, price: pick.item.price }] };
     }
   }
-  if (!opts.dryRun) {
+  if (!opts.dryRun || opts.persistContext) {
     if (nextContext) await saveGuestContext(hotelId, guestPhone, nextContext);
     else if (cancelling || touchedFood || touchedSpa || declined || diningRequests.length || (pending && pending.kind !== "choose" && ordered)) await clearGuestContext(hotelId, guestPhone);
   }
@@ -1453,7 +1454,7 @@ export async function applyCatalog(
 const QUALIFIERS = ["lunch", "dinner", "breakfast", "brunch", "veg", "vegetarian", "nonveg", "non", "beverage", "beverages", "drink", "drinks", "dessert", "desserts", "starter", "starters", "snack", "snacks", "main", "mains", "spicy", "sweet", "cheap", "cold", "hot", "not", "only", "just", "without", "except", "special", "specials", "today", "tonight", "morning", "evening", "kids", "healthy", "light", "quick", "recommend", "suggest", "good", "best", "hungry"];
 
 /** A menu ask with a qualifier (lunch menu, only drinks, not all) needs judgement, so it goes to the model rather than the fixed digest. */
-function hasQualifier(message: string): boolean {
+export function hasQualifier(message: string): boolean {
   const words = normalise(message).split(" ").filter(Boolean);
   return words.some((w) => QUALIFIERS.includes(w));
 }
@@ -1479,7 +1480,7 @@ export function suggestionsForPrompt(catalog: Catalog, history: Map<string, numb
 }
 
 /** The model may name dishes and prices now, so every price it writes is checked against the catalogue and corrected. */
-function verifyReply(reply: string, catalog: Catalog): string {
+export function verifyReply(reply: string, catalog: Catalog): string {
   // WhatsApp bold is *single* and it has no headings - markdown slipped in by the model would show as raw symbols
   let out = reply.replace(/\*\*(.+?)\*\*/g, "*$1*").replace(/^#{1,6}\s+/gm, "");
   // internal catalog codes (F3, S1) are for the system, never for the guest
@@ -1499,4 +1500,22 @@ function verifyReply(reply: string, catalog: Catalog): string {
     });
   }
   return out;
+}
+
+/**
+ * The model may name dishes and prices, but the catalogue is the only truth. A price in its words that
+ * belongs to no item - not even a multiple of one - means it described something the hotel does not sell,
+ * so that sentence is dropped before the guest sees it. Server-written receipts never pass through here.
+ */
+export function guardModelReply(reply: string, catalog: Catalog): string {
+  const known = new Set<number>();
+  for (const i of catalog.items) if (i.price > 0) for (let k = 1; k <= 10; k++) known.add(Math.round(i.price * k));
+  if (!known.size) return reply;
+  const amountRe = /(?:\u20B9|Rs\.?|INR)\s?([\d,]+(?:\.\d+)?)/gi;
+  const hasUnknown = (s: string) => Array.from(s.matchAll(amountRe)).some((m) => !known.has(Math.round(Number((m[1] ?? "").replace(/,/g, "")))));
+  if (!hasUnknown(reply)) return reply;
+  const lines = reply.split(/\r?\n/).map((line) => (hasUnknown(line) ? line.split(/(?<=[.!?])\s+/).filter((s) => !hasUnknown(s)).join(" ") : line));
+  const cleaned = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  log.warn("catalog: model mentioned a price that belongs to no catalogue item - sentence removed", { reply: reply.slice(0, 240) });
+  return cleaned || "Let me check that with the team - they will confirm shortly.";
 }

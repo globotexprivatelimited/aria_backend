@@ -1,0 +1,41 @@
+import "dotenv/config";
+import { prisma } from "../db";
+import { loadCatalog, applyCatalog, loadGuestContext, describePending, fastPath, suggestionsForPrompt, loadGuestHistory } from "../menu/catalog";
+import { understand, type BrainTurn } from "../brain";
+import { loadDeptModes } from "../deptconfig/service";
+
+/**
+ * A whole conversation through the real brain and catalogue, turn by turn, with Aria's memory carried
+ * between messages - but nothing is sent, ordered or booked. Messages are separated by a bar:
+ *   pnpm exec tsx src/scripts/converse.ts 16 "hi|beverage menu|2 samosa"
+ */
+const TEST_PHONE = "+910000000099";
+
+async function main() {
+  const hotelId = process.argv[2] ?? "16";
+  const script = (process.argv[3] ?? "hi|what is good for lunch?|beverage menu|pls snd 2 samosa|facial tomorrow morning, male therapist please|10 am|tv not working").split("|").map((s) => s.trim()).filter(Boolean);
+  const hotel: any = await prisma.hotel.findUnique({ where: { hotelId } });
+  if (!hotel) { console.log("no hotel " + hotelId); return; }
+  const deptModes = Object.fromEntries(await loadDeptModes(hotelId));
+  const catalog = await loadCatalog(hotelId, hotel.timezone ?? null);
+  const session = { roomNumber: "104", claimedGuestName: "Test Guest", roomVerified: true };
+  const turns: BrainTurn[] = [];
+  const clear = async () => { try { await prisma.$executeRawUnsafe("delete from guest_context where hotel_id = $1 and guest_phone = $2", hotelId, TEST_PHONE); } catch { /* table not created yet */ } };
+  await clear();
+  const history = await loadGuestHistory(hotelId, TEST_PHONE);
+  for (const message of script) {
+    const t = Date.now();
+    const pending = await loadGuestContext(hotelId, TEST_PHONE);
+    const fast = fastPath(message, pending, catalog);
+    const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) }, session, { history: turns });
+    const output = await applyCatalog(brain.output, catalog, hotelId, session, TEST_PHONE, { pending, message, deptModes, dryRun: true, persistContext: true });
+    console.log("\nGUEST: " + message);
+    console.log("ARIA (" + (fast ? "fast path" : "model") + ", " + (Date.now() - t) + " ms):");
+    console.log(output.reply.split("\n").map((l) => "   " + l).join("\n"));
+    for (const r of output.requests) console.log("   -> FILED " + r.intent + ": " + r.detail);
+    turns.push({ role: "user", content: message }, { role: "assistant", content: output.reply });
+  }
+  await clear();
+}
+
+main().catch((e) => console.log("ERR", e instanceof Error ? e.message : String(e))).finally(() => process.exit(0));
