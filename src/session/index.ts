@@ -74,7 +74,7 @@ export async function runSession(hotel: SessionHotel, guestPhone: string, text: 
   }
 
   if (session.state === "flagged") {
-    if (matchesAny(text, AFFIRM)) {
+    if (matchesAny(text, AFFIRM) || (session.checkOutDate && new Date(session.checkOutDate).getTime() + 86400000 > Date.now())) {
       session = await prisma.session.update({ where: { id: session.id }, data: { state: "active", lastMessageAt: new Date() } });
       return { proceed: true, session };
     }

@@ -9,7 +9,7 @@ export const REQUEST_STALE_DAYS = Number(process.env.REQUEST_STALE_DAYS ?? 3);
 export async function runSelfHealing(): Promise<void> {
   const now = Date.now();
   const cutoff = new Date(now - INACTIVITY_HOURS * 3600 * 1000);
-  const stale = await prisma.session.findMany({ where: { state: "active", lastMessageAt: { lt: cutoff } } });
+  const stale = await prisma.session.findMany({ where: { state: "active", lastMessageAt: { lt: cutoff }, OR: [{ checkOutDate: null }, { checkOutDate: { lt: new Date(now - 86400000) } }] } });
   for (const s of stale) {
     await prisma.session.update({ where: { id: s.id }, data: { state: "flagged" } });
     await sendReply(s.guestPhone, "Are you still with us at the hotel? Just checking in.", s.hotelId);
