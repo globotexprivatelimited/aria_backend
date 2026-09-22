@@ -1,4 +1,4 @@
-import { loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending, fastPath } from "../menu/catalog";
+import { loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending, fastPath, loadGuestHistory, suggestionsForPrompt } from "../menu/catalog";
 import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { runSafetyChecks } from "../safety";
@@ -7,6 +7,8 @@ import { ensureConsentOnFirstContact, isWithdrawalKeyword, CONSENT_NOTICE } from
 import { eraseGuestData } from "../privacy/erasure";
 import { loadDeptModes } from "../deptconfig/service";
 import { sendReply } from "../lib/notify";
+import { sendTypingIndicator } from "../lib/meta";
+import { sendTypingIndicator } from "../lib/meta";
 import { log } from "../lib/logger";
 import { understand } from "../brain";
 import { executeRequests } from "../executor";
@@ -60,6 +62,12 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     },
   });
 
+  // show the guest "typing..." straight away, so a reply that takes a few seconds still feels live
+  if (type === "text") void sendTypingIndicator(messageId, hotel.hotelId);
+
+  // show the guest "typing..." straight away, so a reply that takes a few seconds still feels live
+  if (type === "text") void sendTypingIndicator(messageId, hotel.hotelId);
+
   enqueue(hotel.hotelId + ":" + guestPhone, async () => {
     if (isWithdrawalKeyword(body)) {
       const er = await eraseGuestData(hotel.hotelId, guestPhone, "guest");
@@ -93,7 +101,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     }
 
     // everything the brain needs, fetched at once rather than one after another
-    const [deptModeEntries, catalog, pending, history] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId)]);
+    const [deptModeEntries, catalog, pending, history, ordersBefore] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId), loadGuestHistory(hotel.hotelId, guestPhone)]);
     const deptModes = Object.fromEntries(deptModeEntries);
     // a bare thanks, ok, punctuation or emoji carries no request: answer it without the model (D-034)
     // and never give the model a chance to re-file earlier requests (D-033)
@@ -104,7 +112,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     }
     // a plain answer to an offer Aria just made needs no model call at all
     const fast = fastPath(body, pending, catalog);
-    const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending) }, session, { history });
+    const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, ordersBefore) }, session, { history });
     const usedFallback = brain.usedFallback;
     const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body, deptModes });
 

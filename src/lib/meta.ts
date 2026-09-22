@@ -94,3 +94,31 @@ export async function sendTemplateMessage(
     return false;
   }
 }
+
+/**
+ * Mark the guest's message read and show the WhatsApp typing indicator, so the guest sees Aria
+ * "typing..." while the reply is composed. WhatsApp dismisses it when the reply is sent or after
+ * 25 seconds, whichever comes first. Best-effort: a failure here must never block the actual reply.
+ */
+export async function sendTypingIndicator(messageId: string, hotelId?: string): Promise<void> {
+  if (!isMetaConfigured() || !messageId) return;
+  const phoneId = await phoneIdFor(hotelId);
+  try {
+    const res = await fetch("https://graph.facebook.com/" + VERSION + "/" + phoneId + "/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: messageId,
+        typing_indicator: { type: "text" },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      log.warn("meta: typing indicator not shown", { status: res.status, detail: body.slice(0, 200) });
+    }
+  } catch (err) {
+    log.warn("meta: typing indicator threw", { detail: err instanceof Error ? err.message : String(err) });
+  }
+}
