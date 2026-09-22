@@ -1,3 +1,4 @@
+import type { LocalWeather } from "../lib/weather";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { recordMissedDemand } from "../misseddemand/service";
@@ -474,10 +475,10 @@ function minutesOf(hhmmStr: string): number { const [h, m] = hhmmStr.split(":").
 
 export type DayPart = "morning" | "afternoon" | "evening" | "night" | "late";
 export type Season = "hot" | "cold" | "rainy" | "mild";
-export type Moment = { dayPart: DayPart; season: Season; hour: number; weekday: string };
+export type Moment = { dayPart: DayPart; season: Season; hour: number; weekday: string; live?: boolean };
 
 /** Hotel-local hour, month and weekday - what the guest is experiencing, not what the server clock says. */
-export function momentOf(tz: string | null, now: Date = new Date()): Moment {
+export function momentOf(tz: string | null, now: Date = new Date(), weather?: LocalWeather | null): Moment {
   let hour = now.getUTCHours(), month = now.getUTCMonth() + 1, weekday = "day";
   try {
     const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", month: "numeric", weekday: "long", hourCycle: "h23", timeZone: tz ?? undefined }).formatToParts(now);
@@ -488,7 +489,7 @@ export function momentOf(tz: string | null, now: Date = new Date()): Moment {
     }
   } catch { /* server clock it is */ }
   const dayPart: DayPart = hour < 5 ? "late" : hour < 11 ? "morning" : hour < 16 ? "afternoon" : hour < 20 ? "evening" : "night";
-  return { dayPart, season: seasonOf(tz, month), hour, weekday };
+  return weather ? { dayPart, season: seasonFromWeather(weather), hour, weekday, live: true } : { dayPart, season: seasonOf(tz, month), hour, weekday, live: false };
 }
 
 /** Rough season from the calendar; India gets its own summer / monsoon / winter split, elsewhere the hemisphere decides. */
@@ -508,8 +509,23 @@ function seasonOf(tz: string | null, month: number): Season {
   return "mild";
 }
 
+/** Live weather beats the calendar: rain outside is rainy, real heat is hot, whatever the month says. */
+function seasonFromWeather(w: LocalWeather): Season {
+  if (w.raining) return "rainy";
+  const feels = w.feelsC ?? w.tempC;
+  if (feels >= 32) return "hot";
+  if (feels <= 16) return "cold";
+  return "mild";
+}
+
+const weatherFor = new WeakMap<object, LocalWeather | null>();
+/** The live weather joins the catalogue once both have loaded, so every suggestion follows the sky, not the calendar. */
+export function attachWeather(catalog: Catalog, weather: LocalWeather | null): void {
+  weatherFor.set(catalog, weather);
+}
+
 function describeMoment(m: Moment): string {
-  const seasonText = m.season === "hot" ? "hot season" : m.season === "cold" ? "cold season" : m.season === "rainy" ? "monsoon, rainy" : "mild weather";
+  const seasonText = m.season === "hot" ? "hot season" : m.season === "cold" ? "cold season" : m.season === "rainy" ? "monsoon season" : "mild weather";
   return "NOW AT THE HOTEL: " + m.weekday + " " + m.dayPart + " (" + String(m.hour).padStart(2, "0") + ":00 local), " + seasonText + ". Let this shape what you suggest - cool things in the heat, warm things in the cold, breakfast in the morning.";
 }
 
@@ -539,11 +555,11 @@ function affinity(item: CatalogItem, m: Moment, history: Map<string, number>): P
   const drink = kindOf(item) === "drink";
   const hits = history.get(item.id) ?? 0;
 
-  if (m.season === "hot" && cool) reasons.push({ score: 3, text: m.dayPart === "afternoon" ? "perfect for this afternoon heat" : "perfect for this heat" });
+  if (m.season === "hot" && cool) reasons.push({ score: 3, text: !m.live ? "a hot-season favourite" : m.dayPart === "afternoon" ? "perfect for this afternoon heat" : "perfect for this heat" });
   if (m.season === "hot" && warm && !(drink && m.dayPart === "morning")) reasons.push({ score: -1.5, text: "" });
-  if (m.season === "cold" && warm) reasons.push({ score: 3, text: m.dayPart === "night" || m.dayPart === "evening" ? "just right for a cold evening" : "warming on a cold day" });
+  if (m.season === "cold" && warm) reasons.push({ score: 3, text: !m.live ? "a cold-season warmer" : m.dayPart === "night" || m.dayPart === "evening" ? "just right for a cold evening" : "warming on a cold day" });
   if (m.season === "cold" && cool) reasons.push({ score: -1.5, text: "" });
-  if (m.season === "rainy" && rainy) reasons.push({ score: 2.5, text: "made for a rainy day" });
+  if (m.season === "rainy" && rainy) reasons.push({ score: 2.5, text: m.live ? "made for a rainy day" : "a monsoon favourite" });
   if (m.dayPart === "morning" && isBreakfast(item)) reasons.push({ score: 2.5, text: "a good way to start the morning" });
   if (m.dayPart !== "morning" && isBreakfast(item) && !drink) reasons.push({ score: -1, text: "" });
   if ((m.dayPart === "night" || m.dayPart === "evening") && isDessert(item)) reasons.push({ score: 2, text: "a sweet finish to the evening" });
@@ -560,7 +576,7 @@ function affinity(item: CatalogItem, m: Moment, history: Map<string, number>): P
 
 /** The best things to put in front of this guest right now, from the available menu. */
 export function picksFor(catalog: Catalog, dept: CatalogDept, history: Map<string, number>, opts: { exclude?: Set<string>; kind?: "drink" | "food" | null; limit?: number; minScore?: number } = {}): Pick[] {
-  const m = momentOf(catalog.timezone, catalog.now);
+  const m = momentOf(catalog.timezone, catalog.now, weatherFor.get(catalog));
   const pool = catalog.items.filter((i) => i.dept === dept && availability(i, catalog.timezone).ok && !(opts.exclude?.has(i.id)) && (!opts.kind || kindOf(i) === opts.kind));
   return pool.map((i) => affinity(i, m, history))
     .filter((p) => p.reason && p.score >= (opts.minScore ?? 1.5))
@@ -855,7 +871,7 @@ type SlotOffer = { slotId: string; date: string; start: string; label: string; f
 /** Free spa times for one treatment on the given dates, earliest first, never in the past. */
 async function slotOffers(hotelId: string, catalog: Catalog, item: CatalogItem, dates: string[]): Promise<SlotOffer[]> {
   const today = localDate(catalog.timezone, catalog.now);
-  const nowMin = momentOf(catalog.timezone, catalog.now).hour * 60 + Number(new Intl.DateTimeFormat("en-GB", { minute: "numeric", timeZone: catalog.timezone ?? undefined }).format(catalog.now));
+  const nowMin = momentOf(catalog.timezone, catalog.now, weatherFor.get(catalog)).hour * 60 + Number(new Intl.DateTimeFormat("en-GB", { minute: "numeric", timeZone: catalog.timezone ?? undefined }).format(catalog.now));
   const out: SlotOffer[] = [];
   for (const date of dates) {
     const res = await getAvailability(hotelId, "spa", date, item.id);
@@ -1422,7 +1438,7 @@ export async function applyCatalog(
 
   // one gentle suggestion with a fresh order: a drink that suits the moment, or a dessert in the evening
   if (ordered && touchedFood && !nextContext && !extraAsks.length && !declined) {
-    const m = momentOf(catalog.timezone, catalog.now);
+    const m = momentOf(catalog.timezone, catalog.now, weatherFor.get(catalog));
     const has = (test: (i: CatalogItem) => boolean) => placedItems.some((i) => test(i));
     let pick: Pick | undefined;
     if (!has((i) => kindOf(i) === "drink")) pick = picksFor(catalog, "fb", history, { kind: "drink", limit: 1, minScore: 2, exclude: new Set(placedItems.map((i) => i.id)) })[0];

@@ -1,4 +1,4 @@
-import { loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending, fastPath, loadGuestHistory, suggestionsForPrompt } from "../menu/catalog";
+import { attachWeather, loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending, fastPath, loadGuestHistory, suggestionsForPrompt } from "../menu/catalog";
 import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { runSafetyChecks } from "../safety";
@@ -101,6 +101,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
 
     // everything the brain needs, fetched at once rather than one after another
     const [deptModeEntries, catalog, pending, history, ordersBefore, weather] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId), loadGuestHistory(hotel.hotelId, guestPhone), localWeather(hotel.hotelId)]);
+    attachWeather(catalog, weather);
     const deptModes = Object.fromEntries(deptModeEntries);
     // a bare thanks, ok, punctuation or emoji carries no request: answer it without the model (D-034)
     // and never give the model a chance to re-file earlier requests (D-033)

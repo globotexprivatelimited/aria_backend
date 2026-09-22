@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { prisma } from "../db";
-import { loadCatalog, applyCatalog, loadGuestContext, describePending, fastPath, suggestionsForPrompt, loadGuestHistory } from "../menu/catalog";
+import { attachWeather, loadCatalog, applyCatalog, loadGuestContext, describePending, fastPath, suggestionsForPrompt, loadGuestHistory } from "../menu/catalog";
 import { understand, type BrainTurn } from "../brain";
 import { loadDeptModes } from "../deptconfig/service";
 import { localWeather, weatherForPrompt } from "../lib/weather";
@@ -25,6 +25,7 @@ async function main() {
   await clear();
   const history = await loadGuestHistory(hotelId, TEST_PHONE);
   const weather = await localWeather(hotelId);
+  attachWeather(catalog, weather);
   console.log("WEATHER -> " + weatherForPrompt(weather));
   for (const message of script) {
     const t = Date.now();
