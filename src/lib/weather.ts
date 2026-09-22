@@ -101,5 +101,5 @@ export function weatherForPrompt(w: LocalWeather | null): string {
   if (w.humidity != null) parts.push(w.humidity + "% humidity");
   if (w.minC != null && w.maxC != null) parts.push("today " + w.minC + "-" + w.maxC + deg);
   if (w.rainChance != null) parts.push(w.rainChance + "% chance of rain today");
-  return "LOCAL WEATHER in " + w.place + " right now (live - the only weather you may mention; the season above is background only): " + parts.join(", ") + ". Let it shape suggestions the way a good host would - heat and humidity suit cooling drinks and lighter plates, rain suits hot snacks and tea, a cool evening suits something warming - and mention it only when it helps. Never describe the weather differently from this line.";
+  return "LOCAL WEATHER in " + w.place + " right now (live - the only weather you may mention; the season above is background only): " + parts.join(", ") + ". Let it shape suggestions the way a good host would - heat and humidity suit cooling drinks and lighter plates, rain suits hot snacks and tea, a cool evening suits something warming - and mention it only when it helps. Never describe the weather differently from this line - but if the guest feels it differently (it is so hot), never correct them: acknowledge how it feels to them, say why if it helps (humidity makes it feel hotter), and help.";
 }

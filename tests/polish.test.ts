@@ -15,3 +15,10 @@ describe("the polish pass never changes a fact", () => {
     expect(keepsTheFacts("Your order for Room 104:\n- 2 x Samosa - \u20B9300\nTotal \u20B9300.", "Room 104 mein 2 samose aa rahe hain - total \u20B9300.")).toBe(true);
   });
 });
+
+describe("promises", () => {
+  test("a rewrite that makes a promise stronger is rejected", () => {
+    const { keepsTheFacts } = require("../src/brain/polish");
+    expect(keepsTheFacts("Our electrical team will be with you in Room 104 shortly.", "Our electrical team is heading to Room 104 right now.")).toBe(false);
+  });
+});

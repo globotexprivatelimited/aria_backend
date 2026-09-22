@@ -30,7 +30,7 @@ export const BrainOutput = z.object({
   needsHuman: z.boolean().default(false),
   showMenu: z.preprocess((v) => (v === "fb" || v === "spa" ? v : v === "all" || v === true ? "fb" : undefined), z.enum(["fb", "spa"]).optional()),
   // the model sets this when it has answered a menu or recommendation question itself, so the server adds no menu of its own
-  answeredMenu: z.boolean().optional(),
+  answeredMenu: z.preprocess((v) => (v === true || v === "true" ? true : v === false || v === "false" ? false : undefined), z.boolean().optional()),
 });
 
 export type BrainRequest = z.infer<typeof BrainRequest>;

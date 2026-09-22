@@ -118,7 +118,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body, deptModes });
 
     // the server wrote part of this reply (a receipt, a booking, a promise): Claude says it in its own voice, every number locked
-    const replyText = output.reply !== brain.output.reply ? await polishReply(output.reply, body) : output.reply;
+    const replyText = output.reply.length > brain.output.reply.length + 15 ? await polishReply(output.reply, body) : output.reply;
     await sendReply(guestPhone, replyText, hotel.hotelId);
 
     const exec = await executeRequests(output, hotel, session, guestPhone, messageId);

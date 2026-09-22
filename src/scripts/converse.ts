@@ -34,7 +34,7 @@ async function main() {
     const fast = fastPath(message, pending, catalog);
     const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather) }, session, { history: turns });
     const output = await applyCatalog(brain.output, catalog, hotelId, session, TEST_PHONE, { pending, message, deptModes, dryRun: true, persistContext: true });
-    const shown = output.reply !== brain.output.reply ? await polishReply(output.reply, message) : output.reply;
+    const shown = output.reply.length > brain.output.reply.length + 15 ? await polishReply(output.reply, message) : output.reply;
     console.log("\nGUEST: " + message);
     console.log("ARIA (" + (fast ? "fast path" : "model") + ", " + (Date.now() - t) + " ms):");
     console.log(shown.split("\n").map((l) => "   " + l).join("\n"));

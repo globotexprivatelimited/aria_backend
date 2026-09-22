@@ -1,3 +1,4 @@
+import { BrainOutput } from "../src/brain/schema";
 import { verifyReply, guardModelReply, hasQualifier, menuDigest } from "../src/menu/catalog";
 
 const item = (o: any) => ({ id: o.code, dept: "fb", kind: "food", category: null, diet: null, available: true, stock: 100, servedFrom: null, servedTo: null, bestseller: false, signature: false, ageRestricted: false, prepMins: 0, durationMin: 0, description: null, ...o });
@@ -70,5 +71,12 @@ describe("reading amounts", () => {
   test("a word ending in rs is not mistaken for rupees", () => {
     const line = "- *Pakora* \u20B9120 - hot fritters, made for exactly this kind of weather";
     expect(guardModelReply(line, catalog)).toBe(line);
+  });
+});
+
+describe("model output", () => {
+  test("a null flag does not sink an otherwise good reply", () => {
+    const r = BrainOutput.safeParse({ requests: [], reply: "Masala Chai is off today", answeredMenu: null, showMenu: null });
+    expect(r.success).toBe(true);
   });
 });
