@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { loadCatalog, applyCatalog, loadGuestContext, describePending, fastPath, suggestionsForPrompt, loadGuestHistory } from "../menu/catalog";
 import { understand, type BrainTurn } from "../brain";
 import { loadDeptModes } from "../deptconfig/service";
+import { localWeather, weatherForPrompt } from "../lib/weather";
 
 /**
  * A whole conversation through the real brain and catalogue, turn by turn, with Aria's memory carried
@@ -23,11 +24,13 @@ async function main() {
   const clear = async () => { try { await prisma.$executeRawUnsafe("delete from guest_context where hotel_id = $1 and guest_phone = $2", hotelId, TEST_PHONE); } catch { /* table not created yet */ } };
   await clear();
   const history = await loadGuestHistory(hotelId, TEST_PHONE);
+  const weather = await localWeather(hotelId);
+  console.log("WEATHER -> " + weatherForPrompt(weather));
   for (const message of script) {
     const t = Date.now();
     const pending = await loadGuestContext(hotelId, TEST_PHONE);
     const fast = fastPath(message, pending, catalog);
-    const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) }, session, { history: turns });
+    const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather) }, session, { history: turns });
     const output = await applyCatalog(brain.output, catalog, hotelId, session, TEST_PHONE, { pending, message, deptModes, dryRun: true, persistContext: true });
     console.log("\nGUEST: " + message);
     console.log("ARIA (" + (fast ? "fast path" : "model") + ", " + (Date.now() - t) + " ms):");
