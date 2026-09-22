@@ -1446,6 +1446,8 @@ export async function applyCatalog(
   let head = opener(output.reply, mentions, session.claimedGuestName ?? null, ordered);
   // a bare apology on top of the server's own apology reads doubled
   if (head && /^(so )?sorry[.!]*$|^apologies[.!]*$/i.test(head.trim()) && /^sorry/i.test(extra)) head = null;
+  // when the server writes the confirmation itself, the model's own promises would say it twice
+  if (head && (ordered || (nextContext && nextContext.kind === "slot"))) head = head.split(/(?<=[.!?])\s+/).filter((s) => !/\b(team|shortly|flagged|will be with you|confirm|booked|reserved|arrange)/i.test(s)).join(" ").trim() || null;
   return { ...output, requests: kept, reply: verifyReply(head ? head + "\n\n" + extra : extra, catalog) };
 }
 
@@ -1495,6 +1497,9 @@ export function verifyReply(reply: string, catalog: Catalog): string {
     out = out.replace(re, (whole: string, pre: string, amount: string) => {
       const n = Number(amount.replace(/,/g, ""));
       if (Math.abs(n - item.price) < 0.5) return whole;
+      // a whole multiple is a line total (2 x Samosa - 300), not a wrong price
+      const ratio = n / item.price;
+      if (ratio >= 1 && ratio <= 20 && Math.abs(ratio - Math.round(ratio)) < 0.01) return whole;
       log.warn("catalog: price in reply corrected", { item: item.name, written: n, actual: item.price });
       return pre + money(item.price);
     });

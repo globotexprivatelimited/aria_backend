@@ -58,3 +58,10 @@ describe("order of checks", () => {
     expect(out).toContain("\u20B9120");
   });
 });
+
+describe("receipts", () => {
+  test("a line total is not mistaken for a wrong price", () => {
+    const line = "- 2 x Samosa - \u20B9300";
+    expect(verifyReply(line, catalog)).toBe(line);
+  });
+});
