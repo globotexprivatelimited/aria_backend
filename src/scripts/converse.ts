@@ -2,6 +2,7 @@ import "dotenv/config";
 import { prisma } from "../db";
 import { attachWeather, loadCatalog, applyCatalog, loadGuestContext, describePending, fastPath, suggestionsForPrompt, loadGuestHistory } from "../menu/catalog";
 import { understand, type BrainTurn } from "../brain";
+import { polishReply } from "../brain/polish";
 import { loadDeptModes } from "../deptconfig/service";
 import { localWeather, weatherForPrompt } from "../lib/weather";
 
@@ -33,11 +34,12 @@ async function main() {
     const fast = fastPath(message, pending, catalog);
     const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather) }, session, { history: turns });
     const output = await applyCatalog(brain.output, catalog, hotelId, session, TEST_PHONE, { pending, message, deptModes, dryRun: true, persistContext: true });
+    const shown = output.reply !== brain.output.reply ? await polishReply(output.reply, message) : output.reply;
     console.log("\nGUEST: " + message);
     console.log("ARIA (" + (fast ? "fast path" : "model") + ", " + (Date.now() - t) + " ms):");
-    console.log(output.reply.split("\n").map((l) => "   " + l).join("\n"));
+    console.log(shown.split("\n").map((l) => "   " + l).join("\n"));
     for (const r of output.requests) console.log("   -> FILED " + r.intent + ": " + r.detail);
-    turns.push({ role: "user", content: message }, { role: "assistant", content: output.reply });
+    turns.push({ role: "user", content: message }, { role: "assistant", content: shown });
   }
   await clear();
 }

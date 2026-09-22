@@ -11,6 +11,7 @@ import { sendTypingIndicator } from "../lib/meta";
 import { localWeather, weatherForPrompt } from "../lib/weather";
 import { log } from "../lib/logger";
 import { understand } from "../brain";
+import { polishReply } from "../brain/polish";
 import { executeRequests } from "../executor";
 import { isProactiveOptOut, optOutOfProactive } from "../proactive";
 
@@ -116,7 +117,9 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     const usedFallback = brain.usedFallback;
     const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body, deptModes });
 
-    await sendReply(guestPhone, output.reply, hotel.hotelId);
+    // the server wrote part of this reply (a receipt, a booking, a promise): Claude says it in its own voice, every number locked
+    const replyText = output.reply !== brain.output.reply ? await polishReply(output.reply, body) : output.reply;
+    await sendReply(guestPhone, replyText, hotel.hotelId);
 
     const exec = await executeRequests(output, hotel, session, guestPhone, messageId);
 
