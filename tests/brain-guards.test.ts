@@ -1,3 +1,4 @@
+import { fastPath } from "../src/menu/catalog";
 import { parseLoose } from "../src/brain";
 import { BrainOutput } from "../src/brain/schema";
 import { verifyReply, guardModelReply, hasQualifier, menuDigest } from "../src/menu/catalog";
@@ -94,5 +95,13 @@ describe("reading Claude's answer forgivingly", () => {
   test("a raw line break inside the reply is repaired", () => {
     const out: any = parseLoose('{"reply": "line one\nline two", "requests": []}');
     expect(out.reply).toBe("line one\nline two");
+  });
+});
+
+describe("offers and questions", () => {
+  test("a question about an offered time is not taken as booking it", () => {
+    const pending: any = { kind: "slot", dept: "spa", itemCode: "S1", itemName: "Facial", options: [{ slotId: "x1", date: "2026-09-23", start: "15:00", label: "tomorrow at 3 pm" }] };
+    expect(fastPath("3pm se kab tak chalta hai", pending, catalog)).toBeNull();
+    expect(fastPath("how long is the 3 pm one?", pending, catalog)).toBeNull();
   });
 });

@@ -1,10 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { BrainOutput } from "./schema";
+import { BrainOutput, INTENTS, PRIORITIES } from "./schema";
 import { buildSystemPrompt, type DeptModeMap } from "./prompt";
 import { log } from "../lib/logger";
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
-const MAX_TOKENS = Number(process.env.ANTHROPIC_MAX_TOKENS ?? 800);
+const MAX_TOKENS = Number(process.env.ANTHROPIC_MAX_TOKENS ?? 1200);
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {
@@ -42,6 +42,40 @@ export function parseLoose(json: string): unknown {
     return JSON.parse(out);
   }
 }
+
+/** Claude answers by calling this tool, so the API itself guarantees a structured answer - never loose text to parse. */
+const RESPOND_TOOL: Anthropic.Tool = {
+  name: "respond",
+  description: "Send Aria's WhatsApp reply to the guest and file whatever the guest newly asked the hotel to do. Call this exactly once for every guest message.",
+  input_schema: {
+    type: "object",
+    properties: {
+      requests: {
+        type: "array",
+        description: "What the guest newly asked the hotel to do in this message. Empty when they only asked a question or chatted.",
+        items: {
+          type: "object",
+          properties: {
+            intent: { type: "string", enum: [...INTENTS] },
+            detail: { type: "string", description: "What exactly is wanted, including any preference in the guest's own words" },
+            priority: { type: "string", enum: [...PRIORITIES] },
+            quantity: { type: "integer" },
+            whenText: { type: "string", description: "The date and time exactly as the guest said it" },
+            items: { type: "array", items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, qty: { type: "integer" } }, required: ["name"] } },
+            notOnMenu: { type: "array", items: { type: "string" } },
+          },
+          required: ["intent", "detail"],
+        },
+      },
+      reply: { type: "string", description: "The WhatsApp message to the guest, in their language" },
+      showMenu: { type: "string", enum: ["fb", "spa"], description: "Only for a bare request for the whole menu" },
+      answeredMenu: { type: "boolean", description: "True when your reply itself answers a menu or recommendation question" },
+      sentiment: { type: "string", enum: ["happy", "neutral", "unhappy"] },
+      needsHuman: { type: "boolean" },
+    },
+    required: ["requests", "reply", "sentiment", "needsHuman"],
+  },
+};
 
 const SAFE_FALLBACK: BrainOutput = {
   requests: [],
@@ -92,6 +126,8 @@ export async function understand(
         max_tokens: MAX_TOKENS,
         system,
         messages: buildMessages(opts.history ?? [], message),
+        tools: [RESPOND_TOOL],
+        tool_choice: { type: "tool", name: "respond" },
       });
 
       const text = res.content
@@ -99,7 +135,8 @@ export async function understand(
         .map((b) => b.text)
         .join("");
 
-      const json = extractJson(text);
+      const call = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      const json = call ? JSON.stringify(call.input) : extractJson(text);
       if (!json) {
         log.warn("brain: no JSON found in response", { attempt });
         continue;
@@ -115,6 +152,7 @@ export async function understand(
         requests: parsed.data.requests.length,
         sentiment: parsed.data.sentiment,
         needsHuman: parsed.data.needsHuman,
+        via: call ? "tool" : "text",
         inputTokens: res.usage.input_tokens,
         outputTokens: res.usage.output_tokens,
       });

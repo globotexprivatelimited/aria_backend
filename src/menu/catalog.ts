@@ -226,7 +226,7 @@ function renderForPrompt(items: CatalogItem[], slots: CatalogSlot[], tz: string 
     (i) => [i.code, i.name, i.servedFrom && i.servedTo ? to12h(i.servedFrom) + " to " + to12h(i.servedTo) : "-"].join(" | "));
   block(items.filter((i) => i.dept === "dining" && i.kind === "table"), "RESTAURANT TABLES", "code | table | seats each | how many | notes",
     (i) => [i.code, i.name, i.seats || "-", i.stock || "-", i.description ?? "-"].join(" | "));
-  block(items.filter((i) => i.dept === "spa"), "SPA TREATMENTS", "code | treatment | duration | price | bookable times",
+  block(items.filter((i) => i.dept === "spa"), "SPA TREATMENTS", "code | treatment | duration | price | usual schedule - NOT live availability",
     (i) => [i.code, i.name, i.durationMin ? i.durationMin + " min" : "-", money(i.price), slotSummary(i, slots) || "no fixed times - the spa team confirms"].join(" | "));
   block(items.filter((i) => i.dept === "housekeeping"), "HOUSEKEEPING - services and items guests can ask for", "code | name | type | price or stock",
     (i) => [i.code, i.name, i.kind ?? "service", i.kind === "amenity" ? (i.stock > 0 ? i.stock + " in stock" : "in stock") : (i.price ? money(i.price) : "included")].join(" | "));
@@ -843,6 +843,8 @@ export function fastPath(message: string, pending: GuestContext | null, catalog:
   }
   if (!pending) return null;
   const words = normalise(message).split(" ").filter(Boolean);
+  // a question about an offer ("3pm se kab tak?", "how much is it?") is not an answer to it - the model decides
+  if (/\?|\b(kab|kitna|kitni|kitne|kya|kaisa|kaise|kaun|how|what|when|which|until|long|much)\b/i.test(message)) return null;
   if (words.length === 0 || words.length > 8) return null;
   if (pending.kind === "slot") {
     const pick = resolveSlotPick(message, pending, catalog.timezone, catalog.now);
