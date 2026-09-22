@@ -1223,6 +1223,8 @@ export async function applyCatalog(
     const { confirmed, unavailable, ambiguous } = resolveAsks(asks, "spa", catalog);
     const lines: string[] = [];
     const mode = modeOf("spa");
+    // what the guest asked for beyond the treatment itself (a male therapist, an allergy) must reach the spa team, never be dropped
+    const spaNote = (() => { const n = spaRequests.map((r) => r.detail).filter((d) => /\b(male|female|man|woman|lady|gent|therapist|attendant|allerg|pregnan|sensitiv|prefer)/i.test(d)).join("; "); return n ? " - guest note: " + n.slice(0, 160) : ""; })();
     for (const c of confirmed) {
       const item = c.item;
       const hasSlots = catalog.slots.some((s) => s.dept === "spa" && s.active && (s.itemId === item.id || s.itemId === null));
@@ -1231,7 +1233,7 @@ export async function applyCatalog(
       const label = item.name + " (" + (item.durationMin ? item.durationMin + " min, " : "") + money(item.price) + ")";
       if (!hasSlots) {
         ordered = true;
-        kept.push({ intent: "spa", detail: "Spa: " + label + (whenText ? " - " + whenText : ""), priority: "normal", whenText: whenText || undefined });
+        kept.push({ intent: "spa", detail: "Spa: " + label + spaNote + (whenText ? " - " + whenText : ""), priority: "normal", whenText: whenText || undefined });
         lines.push("Spa request noted: " + label + (whenText ? " for " + whenText : "") + ". The spa team will confirm your time shortly.");
         continue;
       }
@@ -1241,11 +1243,11 @@ export async function applyCatalog(
         const offers = await slotOffers(hotelId, catalog, item, [date]);
         const hit = offers.find((o) => Math.abs(minutesOf(o.start) - minutesOf(when.time!)) <= 30);
         if (hit) {
-          const booked = opts.dryRun ? { ok: true as const } : await bookSlot({ hotelId, slotId: hit.slotId, onDate: hit.date, roomNumber: room ?? undefined, guestName: session.claimedGuestName ?? undefined, guestPhone, partySize: 1, note: item.name });
+          const booked = opts.dryRun ? { ok: true as const } : await bookSlot({ hotelId, slotId: hit.slotId, onDate: hit.date, roomNumber: room ?? undefined, guestName: session.claimedGuestName ?? undefined, guestPhone, partySize: 1, note: item.name + spaNote });
           if (booked.ok) {
             ordered = true;
             const whenNice = niceDate(hit.date) + " at " + to12h(hit.start);
-            kept.push({ intent: "spa", detail: "Spa: " + label + " - " + whenNice + " (slot reserved)", priority: "normal", whenText: whenNice });
+            kept.push({ intent: "spa", detail: "Spa: " + label + spaNote + " - " + whenNice + " (slot reserved)", priority: "normal", whenText: whenNice });
             lines.push(mode === "auto"
               ? "Your " + item.name + " is booked for " + whenNice + " (" + (item.durationMin ? item.durationMin + " min, " : "") + money(item.price) + ")."
               : "I have reserved " + whenNice + " for your " + item.name + " (" + (item.durationMin ? item.durationMin + " min, " : "") + money(item.price) + ") - the spa will confirm shortly.");
@@ -1261,7 +1263,7 @@ export async function applyCatalog(
           nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, options: alt.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
         } else {
           ordered = true;
-          kept.push({ intent: "spa", detail: "Spa: " + label + " - " + whenText + " (no open slot, team to confirm)", priority: "normal", whenText: whenText || undefined });
+          kept.push({ intent: "spa", detail: "Spa: " + label + spaNote + " - " + whenText + " (no open slot, team to confirm)", priority: "normal", whenText: whenText || undefined });
           lines.push("No fixed times are open for " + item.name + " around then - the spa team will confirm a time with you shortly.");
         }
         mentions.push(item.name);
@@ -1275,7 +1277,7 @@ export async function applyCatalog(
         nextContext = { kind: "slot", dept: "spa", itemCode: item.code, itemName: item.name, options: offers.map((o) => ({ slotId: o.slotId, date: o.date, start: o.start, label: o.label })) };
       } else {
         ordered = true;
-        kept.push({ intent: "spa", detail: "Spa: " + label + " (no open slot in the next days, team to confirm)", priority: "normal" });
+        kept.push({ intent: "spa", detail: "Spa: " + label + spaNote + " (no open slot in the next days, team to confirm)", priority: "normal" });
         lines.push("There are no open times for " + item.name + " in the next few days - the spa team will get back to you with options.");
       }
       mentions.push(item.name);
