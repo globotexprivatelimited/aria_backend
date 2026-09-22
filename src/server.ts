@@ -103,7 +103,7 @@ app.use((req, res, next) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "aria-api", time: new Date().toISOString() });
+  res.json({ ok: true, service: "aria-api", commit: (process.env.RENDER_GIT_COMMIT ?? "local").slice(0, 7), time: new Date().toISOString() });
 });
 
 app.get("/ready", async (_req, res) => {
