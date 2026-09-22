@@ -26,6 +26,23 @@ function extractJson(text: string): string | null {
   return cleaned.slice(start, end + 1);
 }
 
+/** JSON as the model wrote it; if a raw line break slipped inside a string, escape it and read it again. */
+export function parseLoose(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    let out = "", inStr = false, esc = false;
+    for (const ch of json) {
+      if (!inStr) { if (ch === '"') inStr = true; out += ch; continue; }
+      if (esc) { out += ch; esc = false; continue; }
+      if (ch === "\\") { out += ch; esc = true; continue; }
+      if (ch === '"') { inStr = false; out += ch; continue; }
+      out += ch === "\n" ? "\\n" : ch === "\r" ? "" : ch === "\t" ? "\\t" : ch;
+    }
+    return JSON.parse(out);
+  }
+}
+
 const SAFE_FALLBACK: BrainOutput = {
   requests: [],
   reply: "Thanks for your message - let me get someone from our team to help you with that right away.",
@@ -88,9 +105,9 @@ export async function understand(
         continue;
       }
 
-      const parsed = BrainOutput.safeParse(JSON.parse(json));
+      const parsed = BrainOutput.safeParse(parseLoose(json));
       if (!parsed.success) {
-        log.warn("brain: response failed validation", { attempt, detail: parsed.error.issues[0]?.message });
+        log.warn("brain: response failed validation", { attempt, detail: parsed.error.issues[0]?.message, path: parsed.error.issues[0]?.path?.join(".") });
         continue;
       }
 

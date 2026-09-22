@@ -1,3 +1,4 @@
+import { parseLoose } from "../src/brain";
 import { BrainOutput } from "../src/brain/schema";
 import { verifyReply, guardModelReply, hasQualifier, menuDigest } from "../src/menu/catalog";
 
@@ -78,5 +79,20 @@ describe("model output", () => {
   test("a null flag does not sink an otherwise good reply", () => {
     const r = BrainOutput.safeParse({ requests: [], reply: "Masala Chai is off today", answeredMenu: null, showMenu: null });
     expect(r.success).toBe(true);
+  });
+});
+
+describe("reading Claude's answer forgivingly", () => {
+  test("a zero quantity or unknown label is corrected, not rejected", () => {
+    const r = BrainOutput.safeParse({ requests: [{ intent: "room_service", detail: "2 samosa", quantity: 0, priority: "whenever" }], reply: "On it!", sentiment: "curious" });
+    expect(r.success).toBe(true);
+    if (r.success) { expect(r.data.requests[0].quantity).toBeUndefined(); expect(r.data.requests[0].priority).toBe("normal"); expect(r.data.sentiment).toBe("neutral"); }
+  });
+  test("an empty detail still files the request", () => {
+    expect(BrainOutput.safeParse({ requests: [{ intent: "housekeeping", detail: "" }], reply: "Sure" }).success).toBe(true);
+  });
+  test("a raw line break inside the reply is repaired", () => {
+    const out: any = parseLoose('{"reply": "line one\nline two", "requests": []}');
+    expect(out.reply).toBe("line one\nline two");
   });
 });
