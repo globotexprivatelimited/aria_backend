@@ -50,3 +50,11 @@ describe("what reaches the guest", () => {
     for (const name of ["Samosa", "Pakora", "Mutton Rogan Josh"]) expect(digest.split(name).length - 1).toBeLessThanOrEqual(1);
   });
 });
+
+describe("order of checks", () => {
+  test("a mispriced real dish is corrected, not removed", () => {
+    const out = guardModelReply(verifyReply("- *Pakora* \u20B9130 - crispy and hot", catalog), catalog);
+    expect(out).toContain("Pakora");
+    expect(out).toContain("\u20B9120");
+  });
+});

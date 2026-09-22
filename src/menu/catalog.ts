@@ -1168,7 +1168,7 @@ export async function applyCatalog(
   // a reply of a dozen words or more is the model answering the guest itself - the server then adds receipts only, never a second answer
   // the model answered the guest itself when it says so, or when this was a menu question it chose to answer in prose rather than defer to the grouped menu
   const composed = output.answeredMenu === true || (!output.showMenu && !!opts.message && isMenuQuestion(opts.message) && output.requests.length === 0);
-  output = { ...output, reply: guardModelReply(output.reply, catalog) };
+  output = { ...output, reply: guardModelReply(verifyReply(output.reply, catalog), catalog) };
   // a reply of a dozen words or more is the model answering the guest itself - the server then adds receipts only, never a second answer
   const tz = catalog.timezone, now = catalog.now;
   const modeOf = (dept: string) => opts.deptModes?.[dept] ?? (dept === "fb" || dept === "housekeeping" ? "auto" : dept === "maintenance" ? "maintenance" : "accept_decline");
@@ -1293,7 +1293,7 @@ export async function applyCatalog(
       }
       mentions.push(item.name);
     }
-    if (spaNoteRaw && confirmed.length) lines.push("I have passed your preference on to the spa team - they will confirm it with you.");
+    if (spaNoteRaw && confirmed.length && !/prefer|therapist|attendant/i.test(output.reply)) lines.push(spaRequests.some((r) => /\b(male|female|man|woman|lady|gent|therapist|attendant|allerg|pregnan|sensitiv|prefer)/i.test(r.detail)) ? "I have passed your preference on to the spa team - they will confirm it with you." : "Your preference is noted on the booking for the spa team.");
     for (const u of unavailable) lines.push(unavailableText(u, "spa"));
     for (const a of ambiguous) lines.push(ambiguityText(a, "spa"));
     if (unavailable.length && !opts.dryRun) await noteMissed(hotelId, "spa", room, guestPhone, unavailable);
@@ -1491,7 +1491,7 @@ export function verifyReply(reply: string, catalog: Catalog): string {
   for (const item of catalog.items) {
     if (!item.name || !(item.price > 0)) continue;
     const name = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp("(" + name + "\\s*\\(?\\s*)(?:\\u20B9|Rs\\.?|INR)\\s?([\\d,]+(?:\\.\\d+)?)", "gi");
+    const re = new RegExp("(" + name + "\\*?\\s*[(\\-\\u2013:]?\\s*)(?:\\u20B9|Rs\\.?|INR)\\s?([\\d,]+(?:\\.\\d+)?)", "gi");
     out = out.replace(re, (whole: string, pre: string, amount: string) => {
       const n = Number(amount.replace(/,/g, ""));
       if (Math.abs(n - item.price) < 0.5) return whole;
