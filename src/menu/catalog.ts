@@ -651,13 +651,21 @@ export function menuDigest(catalog: Catalog, dept: CatalogDept, history: Map<str
   }
   const lines: string[] = [title];
   const picks = dept === "spa" ? [] : picksFor(catalog, dept, history, { limit: 2, minScore: 2 });
-  if (picks.length) lines.push("Right now we would suggest: " + picks.map((p) => pickLine(p, dept)).join("; ") + ".");
+  const picked = new Set(picks.map((p) => p.item.id));
+  if (picks.length) {
+    // one clause per reason, so two rainy-day picks read as one suggestion rather than an echo
+    const byReason = new Map<string, Pick[]>();
+    for (const p of picks) byReason.set(p.reason, [...(byReason.get(p.reason) ?? []), p]);
+    lines.push("Right now we would suggest " + Array.from(byReason.entries()).map(([reason, ps]) => joinNatural(ps.map((p) => itemLabel(p.item, dept))) + " - " + reason).join("; ") + ".");
+  }
+  // whatever was suggested is not listed a second time
+  const rest = items.filter((i) => !picked.has(i.id));
   const line = (list: CatalogItem[]) => list.map((i) => itemLabel(i, dept)).join(", ");
   for (const c of cats) {
-    const list = items.filter((i) => i.category === c);
+    const list = rest.filter((i) => i.category === c);
     if (list.length) lines.push(c + ": " + line(list));
   }
-  const uncategorised = items.filter((i) => !i.category);
+  const uncategorised = rest.filter((i) => !i.category);
   if (uncategorised.length) lines.push((cats.length ? "Also: " : "") + line(uncategorised));
   lines.push(dept === "spa" ? "Tell me which treatment and a time that suits you." : "Just tell me what you would like, and how many.");
   return lines.join("\n");
