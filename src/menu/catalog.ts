@@ -174,12 +174,12 @@ function availability(item: CatalogItem, tz: string | null): Availability {
 
 /* ---------------------------------------------------------------- prompt ----------- */
 
-function money(n: number): string {
+export function money(n: number): string {
   const v = Math.round(n * 100) / 100;
   return RUPEE + (Number.isInteger(v) ? v.toLocaleString("en-IN") : v.toFixed(2));
 }
 
-function to12h(hhmmStr: string): string {
+export function to12h(hhmmStr: string): string {
   const [h, m] = hhmmStr.split(":").map((x) => Number(x));
   if (!Number.isFinite(h)) return hhmmStr;
   const suffix = h >= 12 ? "pm" : "am";
@@ -188,7 +188,7 @@ function to12h(hhmmStr: string): string {
 }
 
 const DAY_SHORT: Record<string, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
-function daysText(days: string[]): string {
+export function daysText(days: string[]): string {
   if (days.length >= 7 || days.length === 0) return "daily";
   const order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const sorted = order.filter((d) => days.includes(d));
@@ -418,7 +418,7 @@ export function niceDate(isoDate: string): string {
   const d = new Date(isoDate + "T12:00:00Z");
   return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
 }
-function relDate(isoDate: string, tz: string | null, now: Date): string {
+export function relDate(isoDate: string, tz: string | null, now: Date): string {
   if (isoDate === localDate(tz, now)) return "today";
   if (isoDate === localDate(tz, now, 1)) return "tomorrow";
   return niceDate(isoDate);
@@ -469,7 +469,7 @@ export function parseWhen(text: string, tz: string | null, now: Date, opts: { as
   }
   return { date, time };
 }
-function minutesOf(hhmmStr: string): number { const [h, m] = hhmmStr.split(":").map(Number); return h * 60 + (m || 0); }
+export function minutesOf(hhmmStr: string): number { const [h, m] = hhmmStr.split(":").map(Number); return h * 60 + (m || 0); }
 
 /* ---------------------------------------------------------------- moment ----------- */
 
@@ -642,7 +642,7 @@ function capitalise(s: string): string {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-function joinNatural(parts: string[]): string {
+export function joinNatural(parts: string[]): string {
   if (parts.length <= 1) return parts.join("");
   return parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
 }
@@ -868,10 +868,10 @@ export function fastPath(message: string, pending: GuestContext | null, catalog:
 
 /* ---------------------------------------------------------------- departments ------ */
 
-type SlotOffer = { slotId: string; date: string; start: string; label: string; free: number };
+export type SlotOffer = { slotId: string; date: string; start: string; label: string; free: number };
 
 /** Free spa times for one treatment on the given dates, earliest first, never in the past. */
-async function slotOffers(hotelId: string, catalog: Catalog, item: CatalogItem, dates: string[]): Promise<SlotOffer[]> {
+export async function slotOffers(hotelId: string, catalog: Catalog, item: CatalogItem, dates: string[]): Promise<SlotOffer[]> {
   const today = localDate(catalog.timezone, catalog.now);
   const nowMin = momentOf(catalog.timezone, catalog.now, weatherFor.get(catalog)).hour * 60 + Number(new Intl.DateTimeFormat("en-GB", { minute: "numeric", timeZone: catalog.timezone ?? undefined }).format(catalog.now));
   const out: SlotOffer[] = [];
@@ -888,10 +888,10 @@ async function slotOffers(hotelId: string, catalog: Catalog, item: CatalogItem, 
   return out;
 }
 
-function offerLine(o: SlotOffer, tz: string | null, now: Date): string {
+export function offerLine(o: SlotOffer, tz: string | null, now: Date): string {
   return relDate(o.date, tz, now) + " at " + to12h(o.start);
 }
-function offersText(offers: SlotOffer[], tz: string | null, now: Date): string {
+export function offersText(offers: SlotOffer[], tz: string | null, now: Date): string {
   const byDate = new Map<string, SlotOffer[]>();
   for (const o of offers) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
   return joinNatural(Array.from(byDate.entries()).map(([d, list]) => relDate(d, tz, now) + " at " + joinNatural(list.map((o) => to12h(o.start)))));
@@ -926,7 +926,7 @@ const MAINT_HINTS: { words: string[]; category: RegExp }[] = [
 
 /** Which maintenance service covers what the guest described, if any. */
 /** byName is true only when the guest's words match the service itself, not merely its category (D-038). */
-function matchMaintenance(detail: string, catalog: Catalog): { item: CatalogItem; byName: boolean } | null {
+export function matchMaintenance(detail: string, catalog: Catalog): { item: CatalogItem; byName: boolean } | null {
   const pool = catalog.items.filter((i) => i.dept === "maintenance" && i.available);
   if (pool.length === 0) return null;
   const t = " " + normalise(detail) + " ";
@@ -941,13 +941,13 @@ function matchMaintenance(detail: string, catalog: Catalog): { item: CatalogItem
   return best && best.score >= 0.35 ? { item: best.item, byName: best.byName } : null;
 }
 
-function within(from: string | null, to: string | null, time: string): boolean {
+export function within(from: string | null, to: string | null, time: string): boolean {
   if (!from || !to) return true;
   return from <= to ? time >= from && time <= to : time >= from || time <= to;
 }
 
 /** Confirmed bookings already holding tables in this sitting on this date. */
-async function tablesTaken(hotelId: string, date: string, sitting: CatalogItem | null): Promise<number> {
+export async function tablesTaken(hotelId: string, date: string, sitting: CatalogItem | null): Promise<number> {
   try {
     const rows = await prisma.diningBooking.findMany({
       where: { hotelId, bookingDate: new Date(date + "T00:00:00Z"), status: { in: ["pending", "confirmed"] as never } },
@@ -959,10 +959,10 @@ async function tablesTaken(hotelId: string, date: string, sitting: CatalogItem |
 
 /* ---------------------------------------------------------------- applying --------- */
 
-type Ask = { text: string; qty: number; code?: string };
-type Confirmed = { item: CatalogItem; qty: number; wanted?: number };
-type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[]; generic?: boolean; browse?: boolean };
-type Ambiguous = { ask: string; qty: number; options: CatalogItem[] };
+export type Ask = { text: string; qty: number; code?: string };
+export type Confirmed = { item: CatalogItem; qty: number; wanted?: number };
+export type Unavailable = { ask: string; item: CatalogItem | null; reason: "sold_out" | "not_served_now" | "not_on_menu"; suggestions: CatalogItem[]; generic?: boolean; browse?: boolean };
+export type Ambiguous = { ask: string; qty: number; options: CatalogItem[] };
 const AMBIGUITY_GAP = 0.1;
 
 function asksFrom(r: BrainRequest, dept: CatalogDept, catalog: Catalog): Ask[] {
@@ -979,7 +979,7 @@ function asksFrom(r: BrainRequest, dept: CatalogDept, catalog: Catalog): Ask[] {
   return asks;
 }
 
-function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confirmed: Confirmed[]; unavailable: Unavailable[]; ambiguous: Ambiguous[] } {
+export function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confirmed: Confirmed[]; unavailable: Unavailable[]; ambiguous: Ambiguous[] } {
   const confirmed: Confirmed[] = [];
   const unavailable: Unavailable[] = [];
   const ambiguous: Ambiguous[] = [];
@@ -1026,7 +1026,7 @@ function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confir
 }
 
 /** Race-safe stock decrement via the decrement_stock() function; falls back to a plain update if it is missing. */
-async function takeStock(item: CatalogItem, qty: number): Promise<boolean> {
+export async function takeStock(item: CatalogItem, qty: number): Promise<boolean> {
   if (item.stock <= 0) return true; // not tracked
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(`select ok, new_stock, low from decrement_stock($1::uuid, $2::int)`, item.id, qty);
@@ -1043,7 +1043,7 @@ async function takeStock(item: CatalogItem, qty: number): Promise<boolean> {
   }
 }
 
-async function placeOrder(hotelId: string, room: string | null, guestPhone: string, confirmed: Confirmed[]): Promise<string | null> {
+export async function placeOrder(hotelId: string, room: string | null, guestPhone: string, confirmed: Confirmed[]): Promise<string | null> {
   const total = confirmed.reduce((s, c) => s + c.item.price * c.qty, 0);
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(
@@ -1064,7 +1064,7 @@ async function placeOrder(hotelId: string, room: string | null, guestPhone: stri
   }
 }
 
-function itemLabel(i: CatalogItem, dept: CatalogDept): string {
+export function itemLabel(i: CatalogItem, dept: CatalogDept): string {
   return i.name + " (" + money(i.price) + (dept === "spa" && i.durationMin ? ", " + i.durationMin + " min" : "") + ")";
 }
 
@@ -1129,7 +1129,7 @@ function spaSummary(confirmed: Confirmed[], unavailable: Unavailable[], ambiguou
   return lines.join("\n");
 }
 
-async function noteMissed(hotelId: string, dept: CatalogDept, room: string | null, guestPhone: string, unavailable: Unavailable[]): Promise<void> {
+export async function noteMissed(hotelId: string, dept: CatalogDept, room: string | null, guestPhone: string, unavailable: Unavailable[]): Promise<void> {
   for (const u of unavailable) {
     await recordMissedDemand({
       hotelId, roomNumber: room, guestPhone, department: dept, requestedItem: u.ask, source: "not_offered",

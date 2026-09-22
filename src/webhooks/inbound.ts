@@ -12,6 +12,7 @@ import { localWeather, weatherForPrompt } from "../lib/weather";
 import { log } from "../lib/logger";
 import { understand } from "../brain";
 import { polishReply } from "../brain/polish";
+import { runAgent, useAgent } from "../agent";
 import { executeRequests } from "../executor";
 import { isProactiveOptOut, optOutOfProactive } from "../proactive";
 
@@ -109,6 +110,14 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     if (!pending && isTrivialMessage(body)) {
       await sendReply(guestPhone, trivialReply(body), hotel.hotelId);
       log.info("trivial message - AI skipped", { phone: guestPhone });
+      return;
+    }
+    // the agent brain (ARIA_BRAIN=agent): Claude acts through tools and writes every word itself
+    if (useAgent()) {
+      const agent = await runAgent(body, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather), history, guestPhone });
+      await sendReply(guestPhone, agent.output.reply, hotel.hotelId);
+      const done = await executeRequests(agent.output, hotel, session, guestPhone, messageId);
+      log.info("agent result", { phone: guestPhone, room: session.roomNumber ?? "-", steps: agent.steps, usedFallback: agent.usedFallback, requests: agent.output.requests.map((r) => r.intent + ": " + r.detail).join(" | ") || "none", created: done.created, escalated: done.escalated });
       return;
     }
     // a plain answer to an offer Aria just made needs no model call at all

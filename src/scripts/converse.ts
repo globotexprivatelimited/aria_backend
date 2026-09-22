@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { attachWeather, loadCatalog, applyCatalog, loadGuestContext, describePending, fastPath, suggestionsForPrompt, loadGuestHistory } from "../menu/catalog";
 import { understand, type BrainTurn } from "../brain";
 import { polishReply } from "../brain/polish";
+import { runAgent, useAgent } from "../agent";
 import { loadDeptModes } from "../deptconfig/service";
 import { localWeather, weatherForPrompt } from "../lib/weather";
 
@@ -31,6 +32,15 @@ async function main() {
   for (const message of script) {
     const t = Date.now();
     const pending = await loadGuestContext(hotelId, TEST_PHONE);
+    if (useAgent()) {
+      const agent = await runAgent(message, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather), history: turns, guestPhone: TEST_PHONE, dryRun: true });
+      console.log("\nGUEST: " + message);
+      console.log("ARIA (agent, " + agent.steps + " step" + (agent.steps === 1 ? "" : "s") + ", " + (Date.now() - t) + " ms):");
+      console.log(agent.output.reply.split("\n").map((l) => "   " + l).join("\n"));
+      for (const r of agent.output.requests) console.log("   -> FILED " + r.intent + ": " + r.detail);
+      turns.push({ role: "user", content: message }, { role: "assistant", content: agent.output.reply });
+      continue;
+    }
     const fast = fastPath(message, pending, catalog);
     const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather) }, session, { history: turns });
     const output = await applyCatalog(brain.output, catalog, hotelId, session, TEST_PHONE, { pending, message, deptModes, dryRun: true, persistContext: true });
