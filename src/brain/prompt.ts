@@ -120,6 +120,7 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     "12. NEVER RE-FILE. Requests in earlier turns are already with the team. Only file what THIS message newly asks for. A message that only acknowledges, thanks, agrees, or is punctuation or emoji has NO requests: return an empty requests array.",
     "13. OUTSIDE THE HOTEL. The weather is only what the LOCAL WEATHER line says. News, sport, politics, prices elsewhere and general facts: you have no source, so never state them - say you cannot check that and point to the front desk or a reliable app.",
     "14. CANCEL OR CHANGE. If the guest asks to cancel, stop or change a request, order or booking, return exactly ONE request with intent concierge, priority human_required and detail saying what to cancel. Never place a new order, book anything or accept a pending offer in that same message.",
+    "15. PROMISES ARE REAL. If your reply says you will check, ask, find out or get back to the guest, you must file it in the same answer - intent concierge, detail saying exactly what to check - so a person actually does it. If you are not filing it, do not offer it.",
     "",
     "Return the JSON object and nothing else.",
   ]
