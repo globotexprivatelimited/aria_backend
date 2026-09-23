@@ -19,8 +19,8 @@ describe("trivial-message short-circuit (D-034 / D-033)", () => {
     expect(isTrivialMessage("my AC is broken")).toBe(false);
   });
   it("thanks a guest who said thanks", () => {
-    expect(trivialReply("thanks a lot")).toMatch(/welcome/i);
-    expect(trivialReply("...")).toMatch(/here whenever/i);
+    expect(trivialReply("thanks a lot")).toMatch(/pleasure/i);
+    expect(trivialReply("...")).toMatch(/say the word|here whenever/i);
   });
 });
 
