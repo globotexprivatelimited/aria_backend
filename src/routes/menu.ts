@@ -27,10 +27,29 @@ menuRouter.post("/api/menu", async (req, res) => {
 });
 
 // update an item (any fields)
+/** Checks the numbers a GM can edit and normalises "23" to 23. Returns a reason when something is wrong, so nothing half-valid is saved. */
+export function checkMenuFields(fields: Record<string, unknown>): string | null {
+  const whole = (key: string, label: string): string | null => {
+    if (fields[key] === undefined) return null;
+    const n = typeof fields[key] === "string" && String(fields[key]).trim() !== "" ? Number(fields[key]) : fields[key];
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 9999) return label + " must be a whole number from 0 to 9999";
+    fields[key] = n; return null;
+  };
+  const stock = whole("stock", "Stock"); if (stock) return stock;
+  const low = whole("low_stock_at", "Low-stock level"); if (low) return low;
+  if (fields.price !== undefined) {
+    const n = typeof fields.price === "string" && String(fields.price).trim() !== "" ? Number(fields.price) : fields.price;
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > 1000000) return "Price must be a number of 0 or more";
+    fields.price = Math.round(n * 100) / 100;
+  }
+  return null;
+}
 menuRouter.patch("/api/menu/:id", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
   const { hotelId, fields } = req.body ?? {};
   if (!hotelId || !fields) return res.status(400).json({ error: "hotelId, fields required" });
+  if (typeof fields !== "object") return res.status(400).json({ ok: false, error: "fields must be an object" });
+  const bad = checkMenuFields(fields); if (bad) return res.status(400).json({ ok: false, error: bad });
   const r = await updateMenuItem(hotelId, req.params.id, fields);
   return res.status(r.ok ? 200 : 400).json(r);
 });
@@ -48,6 +67,8 @@ menuRouter.post("/api/menu/patch", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
   const { hotelId, id, fields } = req.body ?? {};
   if (!hotelId || !id || !fields) return res.status(400).json({ error: "hotelId, id, fields required" });
+  if (typeof fields !== "object") return res.status(400).json({ ok: false, error: "fields must be an object" });
+  const bad = checkMenuFields(fields); if (bad) return res.status(400).json({ ok: false, error: bad });
   const r = await updateMenuItem(hotelId, id, fields);
   return res.status(r.ok ? 200 : 400).json(r);
 });
