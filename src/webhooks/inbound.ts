@@ -15,7 +15,7 @@ import { understand } from "../brain";
 import { polishReply } from "../brain/polish";
 import { runAgent, useAgent } from "../agent";
 import { executeRequests } from "../executor";
-import { isProactiveOptOut, optOutOfProactive } from "../proactive";
+import { isProactiveOptOut, optOutOfProactive, captureFeedback } from "../proactive";
 
 export type InboundMessage = {
   messageId: string;
@@ -69,6 +69,9 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
   if (type === "text") void sendTypingIndicator(messageId, hotel.hotelId);
 
   // show the guest "typing..." straight away, so a reply that takes a few seconds still feels live
+
+  // a guest who has already checked out, replying after we asked how their stay was: feedback for the manager
+  if (type === "text" && body && (await captureFeedback(hotel.hotelId, guestPhone, body))) return;
 
   enqueue(hotel.hotelId + ":" + guestPhone, async () => {
     if (isWithdrawalKeyword(body)) {

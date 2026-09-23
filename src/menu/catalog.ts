@@ -1043,8 +1043,28 @@ export async function takeStock(item: CatalogItem, qty: number): Promise<boolean
   }
 }
 
+/** An order from this guest in the last three minutes with exactly these items, if any. */
+async function recentTwinOrder(hotelId: string, guestPhone: string, confirmed: Confirmed[]): Promise<string | null> {
+  const want = confirmed.map((c) => c.item.id + ":" + c.qty).sort().join(",");
+  if (!want) return null;
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    "select o.id, string_agg(oi.menu_item_id::text || ':' || oi.qty, ',' order by oi.menu_item_id) as sig from orders o join order_items oi on oi.order_id = o.id where o.hotel_id = $1 and o.guest_phone = $2 and o.status = 'placed' and o.created_at > now() - interval '3 minutes' group by o.id",
+    hotelId, guestPhone);
+  const twin = rows.find((r) => String(r.sig) === want);
+  return twin ? String(twin.id) : null;
+}
+
 export async function placeOrder(hotelId: string, room: string | null, guestPhone: string, confirmed: Confirmed[]): Promise<string | null> {
   const total = confirmed.reduce((s, c) => s + c.item.price * c.qty, 0);
+  // the same items from the same guest within three minutes is one order sent twice - never a second order
+  try {
+    const twin = await recentTwinOrder(hotelId, guestPhone, confirmed);
+    if (twin) {
+      for (const c of confirmed) if (c.item.stock > 0) await prisma.$executeRawUnsafe("update menu_items set stock = stock + $2 where id = $1::uuid", c.item.id, c.qty);
+      log.warn("catalog: duplicate order ignored - same items moments ago", { hotelId, guestPhone, twin });
+      return twin;
+    }
+  } catch { /* the twin check must never block an order */ }
   try {
     const rows = await prisma.$queryRawUnsafe<any[]>(
       `insert into orders (hotel_id, dept, room, guest_phone, status, total) values ($1, 'fb', $2, $3, 'placed', $4) returning id`,

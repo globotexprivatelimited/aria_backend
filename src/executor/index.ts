@@ -1,3 +1,4 @@
+import { cancelAndTell, looksLikeOrderCancellation } from "../menu/orders";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { notifyDepartment, notifyGM, notifyFrontDesk } from "../lib/notify";
@@ -111,6 +112,13 @@ export async function executeRequests(
       await createDiningBooking(hotel, session, guestPhone, r.detail, r.quantity, r.whenText);
       result.bookings += 1;
       continue;
+    }
+
+    // A guest cancelling an order they just placed gets it actually cancelled - not a ticket that promises it.
+    if (looksLikeOrderCancellation(r.detail)) {
+      const c = await cancelAndTell(hotel.hotelId, guestPhone);
+      if (c.outcome === "cancelled") { log.info("executor: order cancelled for the guest", { orderId: c.orderId, phone: guestPhone }); continue; }
+      if (c.outcome === "started") { r.priority = "human_required"; r.detail = "Kitchen already started - guest wants to cancel or change: " + r.detail; }
     }
 
     // D-037: a request with no description is unactionable for staff - never create one.

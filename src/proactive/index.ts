@@ -1,7 +1,7 @@
 import { eveningBefore } from "../lib/localtime";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
-import { sendReply, sendTemplateReply } from "../lib/notify";
+import { sendReply, sendTemplateReply, notifyGM } from "../lib/notify";
 
 type TriggerType =
   | "welcome"
@@ -148,6 +148,24 @@ export async function scheduleActivityTriggers(
   }
 
   await schedule(hotelId, sessionId, guestPhone, "post_activity_upsell", new Date(start.getTime() + 3 * HOURS));
+}
+
+/** A message from a guest who has already left, after we asked how their stay was: feedback for the manager, not a new conversation. */
+export async function captureFeedback(hotelId: string, guestPhone: string, text: string): Promise<boolean> {
+  const open = await prisma.session.findFirst({ where: { hotelId, guestPhone, state: { not: "closed" } }, select: { id: true } });
+  if (open) return false;
+  const asked = await prisma.proactiveTrigger.findFirst({ where: { hotelId, guestPhone, triggerType: "feedback" as never, status: "sent", sentAt: { gt: new Date(Date.now() - 72 * HOURS) } }, orderBy: { sentAt: "desc" } });
+  if (!asked) return false;
+  const session = asked.sessionId ? await prisma.session.findUnique({ where: { id: asked.sessionId } }) : null;
+  const first = (session?.claimedGuestName ?? "").trim().split(" ")[0];
+  const detail = "Feedback after stay from " + ((session?.claimedGuestName ?? "").trim() || guestPhone) + (session?.roomNumber ? " (room " + session.roomNumber + ")" : "") + ": " + text.trim().slice(0, 800);
+  try {
+    await prisma.request.create({ data: { hotelId, sessionId: asked.sessionId, guestPhone, intent: "concierge" as never, department: "front_desk" as never, requestDetail: detail, priority: "normal" as never, status: "received" } });
+  } catch (err) { log.warn("feedback: could not file for the board", { detail: err instanceof Error ? err.message : String(err) }); }
+  await notifyGM(hotelId, detail);
+  await sendReply(guestPhone, "Thank you" + (first ? " " + first : "") + " - that has gone straight to our manager. We hope to welcome you back.", hotelId);
+  log.info("feedback captured", { hotelId, phone: guestPhone });
+  return true;
 }
 
 /** After check-out, one message asking how the stay was - two hours on, never at night (quiet hours move it to the morning). */

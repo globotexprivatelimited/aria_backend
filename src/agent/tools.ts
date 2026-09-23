@@ -1,3 +1,4 @@
+import { cancelOrder, cancelLatestOrder } from "../menu/orders";
 import type Anthropic from "@anthropic-ai/sdk";
 import { bookSlot } from "../slots/service";
 import { log } from "../lib/logger";
@@ -84,6 +85,11 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       },
       required: ["party_size", "time"],
     },
+  },
+  {
+    name: "cancel_order",
+    description: "Cancel the guest's most recent room-service order, or a specific one, when they no longer want it or ordered twice. Succeeds only if the kitchen has not started; then the stock goes back and the kitchen is told. Tell the guest exactly what the result says.",
+    input_schema: { type: "object", properties: { order_id: { type: "string", description: "the order id shown under ALREADY DONE when the guest means a specific order; omit for their latest" }, reason: { type: "string" } } },
   },
   {
     name: "file_request",
@@ -353,7 +359,18 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
       case "book_spa_slot": return await bookSpaSlot(input, ctx);
       case "place_order": return await placeOrderTool(input, ctx);
       case "request_table": return await requestTable(input, ctx);
-      case "file_request": return await fileRequest(input, ctx);
+      case "cancel_order": {
+      if (ctx.dryRun) { ctx.doneAlready = ctx.doneAlready.filter((d) => d.intent !== "room_service"); return { ok: true, cancelled: true, dry_run: true, note: "dry run - nothing cancelled" }; }
+      const wanted = str(input.order_id, 40);
+      const r = wanted ? await cancelOrder(ctx.hotelId, wanted) : await cancelLatestOrder(ctx.hotelId, ctx.guestPhone);
+      if (r.outcome === "cancelled") {
+        ctx.doneAlready = ctx.doneAlready.filter((d) => !(d.intent === "room_service" && d.detail.includes(r.orderId.slice(0, 8))));
+        return { ok: true, cancelled: true, order: r.items, total: r.total, note: "cancelled, stock restored and the kitchen told. If the guest still wants part of it, place a fresh order with place_order" };
+      }
+      if (r.outcome === "started") return { ok: false, cancelled: false, reason: "the kitchen has already started on " + r.items, note: "say so honestly, and file_request to concierge with priority human_required so a person sorts it out" };
+      return { ok: false, cancelled: false, reason: "no open order from this guest in the last 90 minutes", note: "tell the guest there is nothing open to cancel" };
+    }
+    case "file_request": return await fileRequest(input, ctx);
       default: return { ok: false, error: "unknown tool " + name };
     }
   } catch (err) {

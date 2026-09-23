@@ -1,6 +1,6 @@
 import { prisma } from "../db";
-import { scheduleStayTriggers, cancelTriggersForSession } from "../proactive";
-import { sendTemplateMessage } from "./meta";
+import { scheduleStayTriggers, cancelTriggersForSession, scheduleFeedbackAfterCheckout } from "../proactive";
+import { sendTemplateReply } from "./notify";
 
 const WELCOME_TEMPLATE = process.env.WELCOME_TEMPLATE ?? "guest_welcome";
 
@@ -73,7 +73,7 @@ export async function checkInGuest(hotelId: string, room: string, name: string, 
   try {
     const hotelRow = await prisma.hotel.findUnique({ where: { hotelId }, select: { name: true } });
     const firstName = name.trim().split(/\s+/)[0] || "Guest";
-    await sendTemplateMessage(guestPhone, WELCOME_TEMPLATE, [hotelRow?.name ?? "our hotel", firstName], hotelId);
+    if (WELCOME_TEMPLATE) await sendTemplateReply(guestPhone, WELCOME_TEMPLATE, [hotelRow?.name ?? "our hotel", firstName], hotelId, "Welcome to " + (hotelRow?.name ?? "our hotel") + ", " + firstName + "! I'm Aria - message me here for anything during your stay.");
   } catch (e) {
     console.log("check-in: welcome template not sent:", e instanceof Error ? e.message : String(e));
   }
@@ -92,5 +92,8 @@ export async function checkOutGuest(hotelId: string, opts: { room?: string; phon
   });
   if (!session) return null;
   await cancelTriggersForSession(session.id, "checked out");
-  return prisma.session.update({ where: { id: session.id }, data: { state: "closed" } });
+  const closed = await prisma.session.update({ where: { id: session.id }, data: { state: "closed" } });
+  // one message later asking how the stay was - the only thing that reaches a guest who has left
+  try { await scheduleFeedbackAfterCheckout(hotelId, session.id, session.guestPhone); } catch (e) { console.log("check-out: feedback not scheduled:", e instanceof Error ? e.message : String(e)); }
+  return closed;
 }
