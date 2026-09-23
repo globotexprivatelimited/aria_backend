@@ -979,6 +979,10 @@ function asksFrom(r: BrainRequest, dept: CatalogDept, catalog: Catalog): Ask[] {
   return asks;
 }
 
+/** Water bottles, towels, toiletries: housekeeping amenities, never "not on the menu" - the brain files them with housekeeping. */
+const AMENITY = /\b(water|paani|pani|towel|towels|toothbrush|toothpaste|soap|shampoo|conditioner|lotion|pillow|pillows|blanket|blankets|bedsheet|bedsheets|linen|iron|hanger|hangers|slipper|slippers|tissue|tissues|toilet paper|dental kit|shaving kit|razor|comb|kettle|charger|adapter)\b/i;
+export function isAmenityAsk(text: string): boolean { return AMENITY.test(text); }
+
 export function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): { confirmed: Confirmed[]; unavailable: Unavailable[]; ambiguous: Ambiguous[] } {
   const confirmed: Confirmed[] = [];
   const unavailable: Unavailable[] = [];
@@ -1006,6 +1010,8 @@ export function resolveAsks(asks: Ask[], dept: CatalogDept, catalog: Catalog): {
         unavailable.push({ ask: browse.label, item: null, reason: "not_on_menu", suggestions: browse.items, generic: true, browse: true });
         continue;
       }
+      // an amenity the kitchen does not stock is housekeeping's, not a "not on the menu" line
+      if (dept === "fb" && isAmenityAsk(ask.text)) continue;
       const near = bestMatch(ask.text, pool);
       const anchor = near && near.score >= ANCHOR_MATCH ? near.item : null;
       unavailable.push({ ask: ask.text, item: null, reason: "not_on_menu", suggestions: suggest(ask.text, dept, catalog, new Set(), anchor), generic: dept !== "spa" && isGenericAsk(ask.text) });

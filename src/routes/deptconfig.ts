@@ -14,7 +14,7 @@ deptConfigRouter.get("/api/dept-config", async (req, res) => {
 
 deptConfigRouter.post("/api/dept-config/set", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
-  const { hotelId, dept, mode } = req.body ?? {};
-  const r = await setDeptMode(String(hotelId ?? ""), String(dept ?? ""), mode as DeptMode);
+  const { hotelId, dept, mode, changedBy } = req.body ?? {};
+  const r = await setDeptMode(String(hotelId ?? ""), String(dept ?? ""), mode as DeptMode, typeof changedBy === "string" && changedBy.trim() ? changedBy.trim() : "staff");
   return res.status(r.ok ? 200 : 400).json(r);
 });
