@@ -13,6 +13,35 @@ type TriggerType =
 
 const MINUTES = 60 * 1000;
 const HOURS = 60 * MINUTES;
+const QUIET_FROM = 21 * 60 + 30; // nothing unprompted from 21:30 on the hotel's clock
+const QUIET_TO = 8 * 60;          // until 08:00
+
+/** The hotel's wall clock for an instant: local date (YYYY-MM-DD) and minutes since midnight. */
+export function hotelClock(tz: string | null, at: Date): { date: string; minutes: number } {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz ?? undefined, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
+    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "00";
+    return { date: get("year") + "-" + get("month") + "-" + get("day"), minutes: Number(get("hour")) * 60 + Number(get("minute")) };
+  } catch {
+    return { date: at.toISOString().slice(0, 10), minutes: at.getUTCHours() * 60 + at.getUTCMinutes() };
+  }
+}
+
+/** The instant at which the hotel's clock shows hh:mm on that local date - never the server's clock (Render is UTC; 18:30 UTC is midnight in India). */
+export function atHotelTime(tz: string | null, localDate: string, hh: number, mm: number): Date {
+  const guess = new Date(localDate + "T" + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + ":00Z");
+  const shown = hotelClock(tz, guess);
+  let offset = shown.minutes - (hh * 60 + mm);
+  if (shown.date > localDate) offset += 1440;
+  else if (shown.date < localDate) offset -= 1440;
+  return new Date(guess.getTime() - offset * MINUTES);
+}
+
+function nextDay(localDate: string): string {
+  const d = new Date(localDate + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
 
 /** What Aria says. Kept short - an unprompted message must earn its place. */
 function messageFor(type: TriggerType, guestName: string | null, hotelName: string, extra?: string): string {
@@ -76,9 +105,11 @@ export async function scheduleStayTriggers(
   checkOutDate?: Date | null
 ): Promise<void> {
   const now = Date.now();
+  const hotel = await prisma.hotel.findUnique({ where: { hotelId } });
+  const tz = hotel?.timezone ?? null;
 
-  const evening = new Date();
-  evening.setHours(18, 30, 0, 0);
+  // 18:30 on the hotel's clock, not the server's
+  const evening = atHotelTime(tz, hotelClock(tz, new Date()).date, 18, 30);
   if (evening.getTime() > now) {
     await schedule(hotelId, sessionId, guestPhone, "evening_nudge", evening);
   }
@@ -103,8 +134,8 @@ export async function scheduleActivityTriggers(
 ): Promise<void> {
   if (!sessionId || !activityDate) return;
 
-  const start = new Date(activityDate);
-  start.setHours(9, 0, 0, 0);
+  const hotel = await prisma.hotel.findUnique({ where: { hotelId } });
+  const start = atHotelTime(hotel?.timezone ?? null, activityDate.toISOString().slice(0, 10), 9, 0);
 
   const remindAt = new Date(start.getTime() - 2 * HOURS);
   if (remindAt.getTime() > Date.now()) {
@@ -125,6 +156,7 @@ export async function cancelTriggersForSession(sessionId: string, reason: string
 
 /** Send everything that has come due. Runs on a schedule. */
 export async function sendDueTriggers(): Promise<void> {
+  if ((process.env.PROACTIVE_ENABLED ?? "true").toLowerCase() === "false") return;
   const due = await prisma.proactiveTrigger.findMany({
     where: { status: "pending", scheduledAt: { lte: new Date() } },
     take: 50,
@@ -147,6 +179,26 @@ export async function sendDueTriggers(): Promise<void> {
     // A hotel handling an emergency should not be sending cheerful nudges.
     if (hotel.emergencyMode) {
       log.info("proactive: held back, hotel in emergency mode", { triggerId: t.id });
+      continue;
+    }
+
+    // the hotel's clock decides: an evening nudge only in the evening, nothing unprompted late at night
+    const clock = hotelClock(hotel.timezone ?? null, new Date());
+    if (t.triggerType === "evening_nudge" && (clock.minutes < 17 * 60 || clock.minutes >= 21 * 60)) {
+      await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { status: "cancelled" } });
+      log.warn("proactive: evening nudge outside 17:00-21:00 hotel time - cancelled", { triggerId: t.id, hotelMinutes: clock.minutes });
+      continue;
+    }
+    if (clock.minutes >= QUIET_FROM || clock.minutes < QUIET_TO) {
+      const next = atHotelTime(hotel.timezone ?? null, clock.minutes >= QUIET_FROM ? nextDay(clock.date) : clock.date, QUIET_TO / 60, 0);
+      await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { scheduledAt: next } });
+      log.info("proactive: deferred to the morning - quiet hours", { triggerId: t.id, at: next.toISOString() });
+      continue;
+    }
+    // a guest already talking to Aria does not need a nudge
+    if (t.triggerType === "evening_nudge" && session.lastMessageAt && Date.now() - new Date(session.lastMessageAt).getTime() < 3 * HOURS) {
+      await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { status: "cancelled" } });
+      log.info("proactive: evening nudge skipped - guest messaged recently", { triggerId: t.id });
       continue;
     }
 
