@@ -150,12 +150,28 @@ export async function scheduleActivityTriggers(
   await schedule(hotelId, sessionId, guestPhone, "post_activity_upsell", new Date(start.getTime() + 3 * HOURS));
 }
 
+/** Feedback is a few words of opinion - not a greeting, not a question, not a request. */
+export function looksLikeFeedback(text: string): boolean {
+  const t = (text ?? "").trim();
+  const words = t.split(/\s+/).filter(Boolean).length;
+  if (words < 3) return false;
+  if (/\?\s*$/.test(t)) return false;
+  if (/^(kya|kab|kaise|kaun|kahan|kitna|kitne|how|what|when|where|which|who|why|is|are|can|could|do|does|did|will|would|should|please|pls|send|book|order|need|want)\b/i.test(t)) return false;
+  if (words <= 4 && /^(hi+|hello|hey|namaste|namaskar|thanks|thank you|ok|okay|good (morning|afternoon|evening|night))\b/i.test(t)) return false;
+  return true;
+}
+
 /** A message from a guest who has already left, after we asked how their stay was: feedback for the manager, not a new conversation. */
 export async function captureFeedback(hotelId: string, guestPhone: string, text: string): Promise<boolean> {
   const open = await prisma.session.findFirst({ where: { hotelId, guestPhone, state: { not: "closed" } }, select: { id: true } });
   if (open) return false;
   const asked = await prisma.proactiveTrigger.findFirst({ where: { hotelId, guestPhone, triggerType: "feedback" as never, status: "sent", sentAt: { gt: new Date(Date.now() - 72 * HOURS) } }, orderBy: { sentAt: "desc" } });
   if (!asked) return false;
+  // a greeting, a question or a request is not feedback - it goes the normal way, as a former guest
+  if (!looksLikeFeedback(text)) return false;
+  // one message is the feedback; anything after it is a conversation again
+  const already = await prisma.request.findFirst({ where: { hotelId, guestPhone, requestDetail: { startsWith: "Feedback after stay" }, createdAt: { gt: new Date(Date.now() - 72 * HOURS) } }, select: { id: true } });
+  if (already) return false;
   const session = asked.sessionId ? await prisma.session.findUnique({ where: { id: asked.sessionId } }) : null;
   const first = (session?.claimedGuestName ?? "").trim().split(" ")[0];
   const detail = "Feedback after stay from " + ((session?.claimedGuestName ?? "").trim() || guestPhone) + (session?.roomNumber ? " (room " + session.roomNumber + ")" : "") + ": " + text.trim().slice(0, 800);
