@@ -8,6 +8,7 @@ import type { DoneAction } from "../agent/tools";
 import { isTrivialMessage, trivialReply } from "../webhooks/inbound";
 import { loadDeptModes } from "../deptconfig/service";
 import { localWeather, weatherForPrompt } from "../lib/weather";
+import { knowledgeForPrompt, listFacts } from "../knowledge/service";
 
 /**
  * A whole conversation through the real brain and catalogue, turn by turn, with Aria's memory carried
@@ -32,12 +33,14 @@ async function main() {
   const weather = await localWeather(hotelId);
   attachWeather(catalog, weather);
   console.log("WEATHER -> " + weatherForPrompt(weather));
+  console.log("KNOWLEDGE -> " + (await listFacts(hotelId)).length + " fact(s) written for this hotel");
   for (const message of script) {
     const t = Date.now();
     const pending = await loadGuestContext(hotelId, TEST_PHONE);
+    const knowledge = await knowledgeForPrompt(hotelId, message);
     if (useAgent()) {
       if (isTrivialMessage(message)) { console.log("\nGUEST: " + message); console.log("ARIA (no model - trivial message, as in production):"); console.log("   " + trivialReply(message)); turns.push({ role: "user", content: message }, { role: "assistant", content: trivialReply(message) }); continue; }
-      const agent = await runAgent(message, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather), history: turns, guestPhone: TEST_PHONE, dryRun: true, doneAlready: done });
+      const agent = await runAgent(message, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather) + "\n" + knowledge, history: turns, guestPhone: TEST_PHONE, dryRun: true, doneAlready: done });
       console.log("\nGUEST: " + message);
       console.log("ARIA (agent, " + agent.steps + " step" + (agent.steps === 1 ? "" : "s") + ", " + (Date.now() - t) + " ms):");
       console.log(agent.output.reply.split("\n").map((l) => "   " + l).join("\n"));
@@ -46,7 +49,7 @@ async function main() {
       continue;
     }
     const fast = fastPath(message, pending, catalog);
-    const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather) }, session, { history: turns });
+    const brain = fast ? { output: fast, usedFallback: false } : await understand(message, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather) + "\n" + knowledge }, session, { history: turns });
     const output = await applyCatalog(brain.output, catalog, hotelId, session, TEST_PHONE, { pending, message, deptModes, dryRun: true, persistContext: true });
     const shown = output.reply.replace(/[*#\s]/g, "") !== brain.output.reply.replace(/[*#\s]/g, "") ? await polishReply(output.reply, message) : output.reply;
     console.log("\nGUEST: " + message);

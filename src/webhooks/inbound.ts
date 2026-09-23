@@ -9,6 +9,7 @@ import { loadDeptModes } from "../deptconfig/service";
 import { sendReply } from "../lib/notify";
 import { sendTypingIndicator } from "../lib/meta";
 import { localWeather, weatherForPrompt } from "../lib/weather";
+import { knowledgeForPrompt } from "../knowledge/service";
 import { log } from "../lib/logger";
 import { understand } from "../brain";
 import { polishReply } from "../brain/polish";
@@ -102,7 +103,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     }
 
     // everything the brain needs, fetched at once rather than one after another
-    const [deptModeEntries, catalog, pending, history, ordersBefore, weather] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId), loadGuestHistory(hotel.hotelId, guestPhone), localWeather(hotel.hotelId)]);
+    const [deptModeEntries, catalog, pending, history, ordersBefore, weather, knowledge] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId), loadGuestHistory(hotel.hotelId, guestPhone), localWeather(hotel.hotelId), knowledgeForPrompt(hotel.hotelId, body)]);
     attachWeather(catalog, weather);
     const deptModes = Object.fromEntries(deptModeEntries);
     // a bare thanks, ok, punctuation or emoji carries no request: answer it without the model (D-034)
@@ -114,7 +115,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     }
     // the agent brain (ARIA_BRAIN=agent): Claude acts through tools and writes every word itself
     if (useAgent()) {
-      const agent = await runAgent(body, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather), history, guestPhone });
+      const agent = await runAgent(body, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather) + "\n" + knowledge, history, guestPhone });
       await sendReply(guestPhone, agent.output.reply, hotel.hotelId);
       const done = await executeRequests(agent.output, hotel, session, guestPhone, messageId);
       log.info("agent result", { phone: guestPhone, room: session.roomNumber ?? "-", steps: agent.steps, usedFallback: agent.usedFallback, requests: agent.output.requests.map((r) => r.intent + ": " + r.detail).join(" | ") || "none", created: done.created, escalated: done.escalated });
@@ -122,7 +123,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     }
     // a plain answer to an offer Aria just made needs no model call at all
     const fast = fastPath(body, pending, catalog);
-    const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather) }, session, { history });
+    const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather) + "\n" + knowledge }, session, { history });
     const usedFallback = brain.usedFallback;
     const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body, deptModes });
 
