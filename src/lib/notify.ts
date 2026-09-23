@@ -31,9 +31,9 @@ async function recordOutbound(hotelId: string, phone: string, body: string, type
 /** Message a guest as plain text (inside their 24 hour window). Returns what Meta said, or null if suppressed as a repeat. */
 export async function sendReply(phone: string, text: string, hotelId: string): Promise<SendResult | null> {
   log.info("outbound reply", { phone, hotelId, body: text });
-  // the same text twice in a row is never what a guest wants, whatever upstream retried or doubled
+  // the same text twice within seconds is a double-fire, never a reply - a guest who repeats a question ten seconds later still gets an answer
   try {
-    const twin = await prisma.message.findFirst({ where: { hotelId, guestPhone: phone, direction: "outbound", body: text, createdAt: { gt: new Date(Date.now() - 120000) } }, select: { id: true } });
+    const twin = await prisma.message.findFirst({ where: { hotelId, guestPhone: phone, direction: "outbound", body: text, createdAt: { gt: new Date(Date.now() - 10000) } }, select: { id: true } });
     if (twin) { log.warn("outbound reply suppressed - identical text sent to this guest moments ago", { phone, hotelId }); return null; }
   } catch { /* the guard must never block a reply */ }
 

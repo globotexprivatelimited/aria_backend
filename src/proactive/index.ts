@@ -20,6 +20,11 @@ const QUIET_TO = 8 * 60;          // until 08:00
 function templateEnv(type: string): string { return "META_TEMPLATE_" + type.toUpperCase(); }
 function templateFor(type: string): string { return (process.env[templateEnv(type)] ?? "").trim(); }
 function templateLang(): string { return (process.env.META_TEMPLATE_LANG ?? "en").trim() || "en"; }
+/** The body variables a template takes, in order - "name" only unless META_TEMPLATE_<TYPE>_PARAMS says otherwise (e.g. "name,hotel"). */
+function templateParams(type: string, firstName: string, hotelName: string): string[] {
+  const spec = (process.env["META_TEMPLATE_" + type.toUpperCase() + "_PARAMS"] ?? "name").split(",").map((s) => s.trim()).filter(Boolean);
+  return spec.map((k) => (k === "hotel" ? hotelName : k === "name" ? firstName : k));
+}
 
 /** The hotel's wall clock for an instant: local date (YYYY-MM-DD) and minutes since midnight. */
 export function hotelClock(tz: string | null, at: Date): { date: string; minutes: number } {
@@ -258,7 +263,7 @@ export async function sendDueTriggers(): Promise<void> {
       continue;
     }
     const firstName = (session.claimedGuestName ?? "").trim().split(" ")[0] || "Guest";
-    const result = template ? await sendTemplateReply(t.guestPhone, template, [firstName, hotel.name], t.hotelId, text, templateLang()) : await sendReply(t.guestPhone, text, t.hotelId);
+    const result = template ? await sendTemplateReply(t.guestPhone, template, templateParams(t.triggerType, firstName, hotel.name), t.hotelId, text, templateLang()) : await sendReply(t.guestPhone, text, t.hotelId);
     if (!result || !result.ok) {
       await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { status: "cancelled" } });
       log.warn("proactive: Meta did not accept the message", { triggerId: t.id, triggerType: t.triggerType, error: result ? result.error : "suppressed as a repeat" });

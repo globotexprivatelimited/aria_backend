@@ -163,6 +163,24 @@ app.use(
 );
 app.get("/openapi.json", (_req, res) => res.json(openapiSpec));
 
+// Render Cron Jobs (or any scheduler) can run the same jobs over HTTP - and waking a sleeping instance to do it keeps it awake for guests too
+app.post("/jobs/:name", async (req, res) => {
+  if (!process.env.ADMIN_API_KEY || req.header("x-admin-key") !== process.env.ADMIN_API_KEY) return res.status(401).json({ error: "unauthorized" });
+  const name = String(req.params.name);
+  const started = Date.now();
+  try {
+    if (name === "every-5-min") { await escalateStaleBookings(); await expireWaitlistHolds(); await sendDueTriggers(); }
+    else if (name === "hourly") await runSelfHealing();
+    else if (name === "daily") await runRetentionPurge();
+    else return res.status(404).json({ error: "unknown job - use every-5-min, hourly or daily" });
+    log.info("job ran over HTTP", { job: name, ms: Date.now() - started });
+    return res.json({ ok: true, job: name, ms: Date.now() - started });
+  } catch (e) {
+    log.error("job failed over HTTP", { job: name, detail: e instanceof Error ? e.message : String(e) });
+    return res.status(500).json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 app.use(notFound);
 app.use(errorHandler);
 
