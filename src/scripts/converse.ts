@@ -4,6 +4,8 @@ import { attachWeather, loadCatalog, applyCatalog, loadGuestContext, describePen
 import { understand, type BrainTurn } from "../brain";
 import { polishReply } from "../brain/polish";
 import { runAgent, useAgent } from "../agent";
+import type { DoneAction } from "../agent/tools";
+import { isTrivialMessage, trivialReply } from "../webhooks/inbound";
 import { loadDeptModes } from "../deptconfig/service";
 import { localWeather, weatherForPrompt } from "../lib/weather";
 
@@ -23,6 +25,7 @@ async function main() {
   const catalog = await loadCatalog(hotelId, hotel.timezone ?? null);
   const session = { roomNumber: "104", claimedGuestName: "Test Guest", roomVerified: true };
   const turns: BrainTurn[] = [];
+  const done: DoneAction[] = [];
   const clear = async () => { try { await prisma.$executeRawUnsafe("delete from guest_context where hotel_id = $1 and guest_phone = $2", hotelId, TEST_PHONE); } catch { /* table not created yet */ } };
   await clear();
   const history = await loadGuestHistory(hotelId, TEST_PHONE);
@@ -33,11 +36,12 @@ async function main() {
     const t = Date.now();
     const pending = await loadGuestContext(hotelId, TEST_PHONE);
     if (useAgent()) {
-      const agent = await runAgent(message, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather), history: turns, guestPhone: TEST_PHONE, dryRun: true });
+      if (isTrivialMessage(message)) { console.log("\nGUEST: " + message); console.log("ARIA (no model - trivial message, as in production):"); console.log("   " + trivialReply(message)); turns.push({ role: "user", content: message }, { role: "assistant", content: trivialReply(message) }); continue; }
+      const agent = await runAgent(message, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, history) + "\n" + weatherForPrompt(weather), history: turns, guestPhone: TEST_PHONE, dryRun: true, doneAlready: done });
       console.log("\nGUEST: " + message);
       console.log("ARIA (agent, " + agent.steps + " step" + (agent.steps === 1 ? "" : "s") + ", " + (Date.now() - t) + " ms):");
       console.log(agent.output.reply.split("\n").map((l) => "   " + l).join("\n"));
-      for (const r of agent.output.requests) console.log("   -> FILED " + r.intent + ": " + r.detail);
+      for (const r of agent.output.requests) { console.log("   -> FILED " + r.intent + ": " + r.detail); done.unshift({ intent: r.intent, detail: r.detail, minutesAgo: 0, status: "received" }); }
       turns.push({ role: "user", content: message }, { role: "assistant", content: agent.output.reply });
       continue;
     }

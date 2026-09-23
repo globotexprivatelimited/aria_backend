@@ -15,6 +15,9 @@ import {
  * not real. Whatever a tool does is recorded in ctx.filed for the department boards.
  */
 
+/** Something already with the teams for this guest: a request, an order, a booking. */
+export type DoneAction = { intent: string; detail: string; minutesAgo: number; status: string };
+
 export type AgentContext = {
   hotelId: string;
   catalog: Catalog;
@@ -24,6 +27,8 @@ export type AgentContext = {
   deptModes: Record<string, string>;
   dryRun: boolean;
   filed: BrainRequest[];
+  /** what is already with the teams for this guest, so nothing is done twice */
+  doneAlready: DoneAction[];
 };
 
 export const AGENT_TOOLS: Anthropic.Tool[] = [
@@ -108,6 +113,19 @@ const modeOf = (ctx: AgentContext, dept: string): string =>
   ctx.deptModes[dept] ?? (dept === "fb" || dept === "housekeeping" ? "auto" : dept === "maintenance" ? "maintenance" : "accept_decline");
 const plain = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
 
+const tokens = (s: string) => new Set(plain(s).split(" ").filter((w) => w.length >= 3));
+/** The same ask in different words: the words they share outweigh the words they do not. */
+export function isNearDuplicate(a: string, b: string): boolean {
+  const ta = tokens(a), tb = tokens(b);
+  if (!ta.size || !tb.size) return false;
+  let shared = 0;
+  for (const w of ta) if (tb.has(w)) shared++;
+  return shared >= 2 && shared / (ta.size + tb.size - shared) >= 0.5;
+}
+function alreadyDone(ctx: AgentContext, intent: string, detail: string, withinMinutes: number): DoneAction | null {
+  return ctx.doneAlready.find((d) => d.intent === intent && d.minutesAgo <= withinMinutes && isNearDuplicate(d.detail, detail)) ?? null;
+}
+
 function resolveDate(word: string, tz: string | null, now: Date): string | null {
   const w = word.trim().toLowerCase();
   if (!w || w === "today" || w === "aaj" || w === "aj") return localDate(tz, now);
@@ -184,6 +202,8 @@ async function bookSpaSlot(input: Record<string, unknown>, ctx: AgentContext): P
   const note = str(input.note, 160);
   const label = item.name + " (" + (item.durationMin ? item.durationMin + " min, " : "") + money(item.price) + ")";
   const noteText = note ? " - guest note: " + note : "";
+  const priorBooking = ctx.doneAlready.find((d) => d.intent === "spa" && d.minutesAgo <= 12 * 60 && d.detail.includes(item.name) && /slot reserved|team to confirm/.test(d.detail));
+  if (priorBooking) return { ok: true, already_booked: true, booking: priorBooking.detail, booked_minutes_ago: priorBooking.minutesAgo, note: "already booked - do not book again; tell the guest it is in hand, and only book another if they clearly want a second one" };
   if (!scheduleOf(catalog, item).length) {
     const when = [str(input.date), str(input.start)].filter(Boolean).join(" ");
     ctx.filed.push({ intent: "spa", detail: "Spa: " + label + noteText + (when ? " - " + when : ""), priority: "normal", whenText: when || undefined });
@@ -211,6 +231,8 @@ async function placeOrderTool(input: Record<string, unknown>, ctx: AgentContext)
   const raw = Array.isArray(input.items) ? input.items : [];
   const asks = raw.map((it) => ({ text: str((it as { name?: unknown }).name, 80), qty: int((it as { qty?: unknown }).qty, 1, 20, 1) })).filter((a) => a.text);
   if (!asks.length) return { ok: false, error: "no items given" };
+  const prior = alreadyDone(ctx, "room_service", "Room service order: " + asks.map((a) => a.qty + " x " + a.text).join(", "), 45);
+  if (prior) return { ok: true, already_placed: true, order: prior.detail, placed_minutes_ago: prior.minutesAgo, note: "this order was already placed - do not place it again; tell the guest it is on its way, and only order more if they clearly want more" };
   const { confirmed, unavailable, ambiguous } = resolveAsks(asks, "fb", catalog);
   const placed: Confirmed[] = [];
   for (const c of confirmed) {
@@ -278,6 +300,10 @@ async function fileRequest(input: Record<string, unknown>, ctx: AgentContext): P
   const priority = (["normal", "urgent", "human_required", "emergency"] as const).find((p) => p === str(input.priority, 20)) ?? "normal";
   const quantity = int(input.quantity, 1, 100, 0) || undefined;
   const when = str(input.when, 120) || undefined;
+  const intentOf = (d: string): string => (d === "front_desk" ? "concierge" : d === "housekeeping" || d === "maintenance" || d === "activities" || d === "spa" ? d : "concierge");
+  const prior = alreadyDone(ctx, intentOf(dept), detail, 12 * 60);
+  if (prior && (priority === "normal" || prior.status.toLowerCase().includes("urgent"))) return { ok: true, already_filed: true, team: TEAM_LABEL[dept], request: prior.detail, filed_minutes_ago: prior.minutesAgo, status: prior.status, note: "already with the team - do not file again; tell the guest it is in hand and answer their question. If they say it is taking too long, call file_request once more with priority urgent to chase it" };
+  const chasing = !!prior;
 
   if (dept === "housekeeping" && catalog.configured.housekeeping) {
     const text = plain(detail);
@@ -298,8 +324,8 @@ async function fileRequest(input: Record<string, unknown>, ctx: AgentContext): P
     const label = svc && match?.byName
       ? "Maintenance: " + svc.name + (svc.category ? " (" + svc.category + ")" : "") + " - " + detail
       : "Maintenance" + (svc?.category ? " (" + svc.category + ")" : "") + ": " + detail;
-    ctx.filed.push({ intent: "maintenance", detail: label, priority: urgent ? "urgent" : priority, whenText: when });
-    return { ok: true, team: svc?.category ? svc.category.toLowerCase() + " team" : "maintenance team", promise: svc?.responseMins ? "with you within " + svc.responseMins + " minutes" : "with you shortly", status: "always attended - never declined" };
+    ctx.filed.push({ intent: "maintenance", detail: (chasing ? "CHASE: " : "") + label, priority: urgent ? "urgent" : priority, whenText: when });
+    return { ok: true, ...(chasing ? { chased: true, note: "the team has been chased - say so, without promising a time" } : {}), team: svc?.category ? svc.category.toLowerCase() + " team" : "maintenance team", promise: svc?.responseMins ? "with you within " + svc.responseMins + " minutes" : "with you shortly", status: "always attended - never declined" };
   }
 
   if (dept === "front_desk" && catalog.configured.front_desk) {
@@ -314,7 +340,7 @@ async function fileRequest(input: Record<string, unknown>, ctx: AgentContext): P
   }
 
   const intent: BrainRequest["intent"] = dept === "front_desk" ? "concierge" : dept === "housekeeping" ? "housekeeping" : dept === "activities" ? "activities" : dept === "spa" ? "spa" : "concierge";
-  ctx.filed.push({ intent, detail: (dept === "front_desk" ? "Front desk: " : "") + detail, priority, quantity, whenText: when });
+  ctx.filed.push({ intent, detail: (chasing ? "CHASE: " : "") + (dept === "front_desk" ? "Front desk: " : "") + detail, priority, quantity, whenText: when });
   const promise = priority === "human_required" || priority === "emergency" ? "a member of the team will take this up personally" : modeOf(ctx, dept === "front_desk" ? "front_desk" : dept) === "auto" ? "on its way shortly" : "the team will confirm shortly";
   return { ok: true, team: TEAM_LABEL[dept], promise };
 }

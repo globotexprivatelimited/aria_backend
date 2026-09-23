@@ -199,7 +199,7 @@ export function daysText(days: string[]): string {
 function slotSummary(item: CatalogItem, slots: CatalogSlot[]): string {
   const mine = slots.filter((s) => s.dept === item.dept && s.active && (s.itemId === item.id || s.itemId === null));
   if (mine.length === 0) return "";
-  return mine.slice(0, 6).map((s) => to12h(s.startTime) + " " + daysText(s.days) + " (" + s.capacity + " at a time)").join("; ");
+  return mine.slice(0, 6).map((s) => to12h(s.startTime) + (s.endTime ? " to " + to12h(String(s.endTime).slice(0, 5)) : "") + " " + daysText(s.days) + " (" + s.capacity + " at a time)").join("; ");
 }
 
 function renderForPrompt(items: CatalogItem[], slots: CatalogSlot[], tz: string | null, now: Date): string {

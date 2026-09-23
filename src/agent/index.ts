@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { AGENT_TOOLS, runTool, type AgentContext } from "./tools";
+import { AGENT_TOOLS, runTool, type AgentContext, type DoneAction } from "./tools";
+import { prisma } from "../db";
 import { buildAgentPrompt } from "./prompt";
 import { guardModelReply, verifyReply, type Catalog } from "../menu/catalog";
 import type { BrainOutput } from "../brain/schema";
@@ -30,7 +31,7 @@ export function useAgent(): boolean {
 
 type AgentHotel = { hotelId: string; name: string; timezone?: string | null };
 type AgentSession = { roomNumber?: string | null; claimedGuestName?: string | null; roomVerified?: boolean };
-type AgentOpts = { deptModes?: Record<string, string>; contextText?: string; history?: BrainTurn[]; guestPhone: string; dryRun?: boolean };
+type AgentOpts = { deptModes?: Record<string, string>; contextText?: string; history?: BrainTurn[]; guestPhone: string; dryRun?: boolean; doneAlready?: DoneAction[] };
 export type AgentResult = { output: BrainOutput; usedFallback: boolean; steps: number };
 
 /** Earlier turns give the thread. Same-role turns are merged and the exchange must open with the guest. */
@@ -57,10 +58,38 @@ function toParam(b: Anthropic.ContentBlock): Block | null {
   return null;
 }
 
+/** What is already with the teams for this guest today - so the brain answers "how long?" instead of filing it again. */
+async function loadDoneAlready(hotelId: string, guestPhone: string): Promise<DoneAction[]> {
+  try {
+    const rows = await prisma.request.findMany({ where: { hotelId, guestPhone, createdAt: { gt: new Date(Date.now() - 12 * 60 * 60 * 1000) }, resolvedAt: null, declined: false }, orderBy: { createdAt: "desc" }, take: 12 });
+    return rows.map((r) => ({ intent: String(r.intent ?? "concierge"), detail: r.requestDetail ?? "", minutesAgo: Math.round((Date.now() - new Date(r.createdAt).getTime()) / 60000), status: String(r.status) })).filter((d) => d.detail);
+  } catch (err) {
+    log.warn("agent: could not load earlier requests", { detail: err instanceof Error ? err.message : String(err) });
+    return [];
+  }
+}
+
+function doneText(done: DoneAction[]): string {
+  if (!done.length) return "";
+  return "\n\nALREADY DONE FOR THIS GUEST (with the teams now - never file, order or book these again; when asked how long or where it is, answer from here):" + done.map((d) => "\n- " + d.detail + " (" + (d.minutesAgo < 1 ? "just now" : d.minutesAgo + " min ago") + ", " + d.status + ")").join("");
+}
+
+/** The spa's usual hours with end times, so "until when is the spa open" has an answer. */
+function spaHoursText(catalog: Catalog): string {
+  const lines: string[] = [];
+  for (const item of catalog.items.filter((i) => i.dept === "spa")) {
+    const mine = catalog.slots.filter((s) => s.dept === "spa" && s.active && (s.itemId === item.id || s.itemId === null));
+    if (!mine.length) continue;
+    lines.push("- " + item.name + ": " + mine.map((s) => String(s.startTime).slice(0, 5) + (s.endTime ? " to " + String(s.endTime).slice(0, 5) : "") + (s.days.length === 7 ? ", every day" : s.days.length ? ", " + s.days.join("/") : "") + " (" + s.capacity + " at a time)").join("; "));
+  }
+  return lines.length ? "\n\nSPA HOURS (the usual schedule - answer questions about opening and closing times from this; what is actually free comes only from get_spa_slots):\n" + lines.join("\n") : "";
+}
+
 export async function runAgent(message: string, hotel: AgentHotel, session: AgentSession, catalog: Catalog, opts: AgentOpts): Promise<AgentResult> {
   const ctx: AgentContext = {
     hotelId: hotel.hotelId, catalog, room: session.roomNumber ?? null, guestName: session.claimedGuestName ?? null,
     guestPhone: opts.guestPhone, deptModes: opts.deptModes ?? {}, dryRun: !!opts.dryRun, filed: [],
+    doneAlready: opts.doneAlready ?? (await loadDoneAlready(hotel.hotelId, opts.guestPhone)),
   };
   const finish = (reply: string, usedFallback: boolean, steps: number): AgentResult => ({
     output: { requests: ctx.filed, reply, sentiment: "neutral", needsHuman: usedFallback || ctx.filed.some((r) => r.priority === "human_required" || r.priority === "emergency") },
@@ -69,7 +98,7 @@ export async function runAgent(message: string, hotel: AgentHotel, session: Agen
   const anthropic = getClient();
   if (!anthropic) { log.warn("agent: no API key set, using fallback"); return finish(FALLBACK, true, 0); }
 
-  const system = buildAgentPrompt(hotel, session, ctx.deptModes, catalog.promptText, opts.contextText ?? "");
+  const system = buildAgentPrompt(hotel, session, ctx.deptModes, catalog.promptText, (opts.contextText ?? "") + doneText(ctx.doneAlready) + spaHoursText(catalog));
   const messages = buildMessages(opts.history ?? [], message);
   try {
     for (let step = 1; step <= MAX_STEPS; step++) {
