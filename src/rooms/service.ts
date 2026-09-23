@@ -1,3 +1,5 @@
+import { cancelTriggersForSession } from "../proactive";
+import { isTestNumber, isTestHotel, TEST_GUEST_REFUSED } from "../lib/testguard";
 import { checkInGuest, checkOutGuest } from "../lib/frontdesk";
 import { prisma } from "../db";
 import { randomUUID } from "crypto";
@@ -49,6 +51,12 @@ export async function upsertRoom(hotelId: string, room: { room_number: string; r
 export async function checkInRoom(hotelId: string, roomNumber: string, opts: { guestName?: string; guestPhone?: string; partySize?: number; checkOut?: string; checkIn?: string; notes?: string }): Promise<Result<any>> {
   if (!hotelId || !roomNumber) return { ok: false, error: "roomNumber required" };
   try {
+    // test guests never land in a live hotel, and a room holding a guest is never silently handed to someone else
+    if (isTestNumber(opts.guestPhone) && !isTestHotel(hotelId)) { console.log("REFUSED test guest check-in", JSON.stringify({ hotelId, roomNumber, guest: opts.guestName ?? null, phone: opts.guestPhone ?? null })); return { ok: false, error: TEST_GUEST_REFUSED }; }
+    const current = await prisma.$queryRawUnsafe<any[]>("select status, guest_name, guest_phone from rooms where hotel_id=$1 and room_number=$2", hotelId, roomNumber);
+    const digitsOf = (p: unknown) => String(p ?? "").replace(/[^0-9]/g, "").slice(-10);
+    const sameGuest = digitsOf(current[0]?.guest_phone) ? digitsOf(current[0]?.guest_phone) === digitsOf(opts.guestPhone) : String(current[0]?.guest_name ?? "").trim().toLowerCase() === String(opts.guestName ?? "").trim().toLowerCase();
+    if (current[0]?.status === "occupied" && !sameGuest) return { ok: false, error: "Room " + roomNumber + " is occupied by " + (current[0].guest_name ?? "another guest") + ". Check them out first." };
     const rows = await prisma.$queryRawUnsafe<any[]>(
       `update rooms set status='occupied', guest_name=$3, guest_phone=$4, party_size=$5,
               check_in=coalesce($7::timestamptz, now()), check_out=$6::timestamptz, notes=coalesce($8, notes)
@@ -84,8 +92,15 @@ export async function checkOutRoom(hotelId: string, roomNumber: string): Promise
     if (!rows[0]) return { ok: false, error: "Room not found." };
     // close the guest's Session so the brain knows they've left
     if (phone) {
-      try { await checkOutGuest(hotelId, { phone }); } catch { /* best-effort */ }
+      try { await checkOutGuest(hotelId, { phone }); } catch (e) { console.log("CHECK-OUT: closing the guest's stay failed -", e instanceof Error ? e.message : String(e)); }
     }
+    // every stay still open for this room - or for this guest under any phone format - ends with the check-out
+    try {
+      const last10 = String(phone ?? "").replace(/[^0-9]/g, "").slice(-10);
+      const still = await prisma.session.findMany({ where: { hotelId, state: { not: "closed" }, OR: [{ roomNumber }, ...(last10 ? [{ guestPhone: { endsWith: last10 } }] : [])] }, select: { id: true } });
+      for (const s of still) { await cancelTriggersForSession(s.id, "room checked out"); await prisma.session.update({ where: { id: s.id }, data: { state: "closed" } }); }
+      if (still.length) console.log("check-out: closed " + still.length + " more open stay(s) for room " + roomNumber);
+    } catch (e) { console.log("CHECK-OUT: sweep failed -", e instanceof Error ? e.message : String(e)); }
     return { ok: true, data: norm(rows[0]) };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Could not check out." }; }
 }

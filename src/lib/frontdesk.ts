@@ -1,3 +1,4 @@
+import { isTestNumber, isTestHotel, TEST_GUEST_REFUSED } from "./testguard";
 import { prisma } from "../db";
 import { scheduleStayTriggers, cancelTriggersForSession, scheduleFeedbackAfterCheckout } from "../proactive";
 import { sendTemplateReply } from "./notify";
@@ -17,6 +18,7 @@ function dayBounds(at: Date): { start: Date; end: Date } {
 }
 
 export async function checkInGuest(hotelId: string, room: string, name: string, phone: string, checkOut?: Date | string | null) {
+  if (isTestNumber(phone) && !isTestHotel(hotelId)) throw new Error(TEST_GUEST_REFUSED);
   const guestPhone = canonicalPhone(phone);
   const checkInAt = new Date();
   const data = {

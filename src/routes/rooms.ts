@@ -22,13 +22,20 @@ roomsRouter.post("/api/rooms/upsert", async (req, res) => {
   const { hotelId, room } = req.body ?? {};
   const r = await upsertRoom(hotelId, room); return res.status(r.ok ? 200 : 400).json(r);
 });
+/** Who asked - so a check-in or check-out nobody at the desk made can be traced to where it came from. */
+function sourceOf(req: import("express").Request): string {
+  return JSON.stringify({ ip: String(req.header("x-forwarded-for") ?? req.ip ?? "-").split(",")[0].trim(), ua: String(req.header("user-agent") ?? "-").slice(0, 120), origin: req.header("origin") ?? req.header("referer") ?? "-" });
+}
+
 roomsRouter.post("/api/rooms/checkin", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
+  console.log("ROOMS check-in", String(req.body?.hotelId ?? ""), "room " + String(req.body?.roomNumber ?? ""), String(req.body?.guestName ?? ""), String(req.body?.guestPhone ?? ""), sourceOf(req));
   const { hotelId, roomNumber, guestName, guestPhone, partySize, checkOut, checkIn, notes } = req.body ?? {};
   const r = await checkInRoom(hotelId, roomNumber, { guestName, guestPhone, partySize, checkOut, checkIn, notes }); return res.status(r.ok ? 200 : 400).json(r);
 });
 roomsRouter.post("/api/rooms/checkout", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
+  console.log("ROOMS check-out", String(req.body?.hotelId ?? ""), "room " + String(req.body?.roomNumber ?? ""), sourceOf(req));
   const { hotelId, roomNumber } = req.body ?? {};
   const r = await checkOutRoom(hotelId, roomNumber); return res.status(r.ok ? 200 : 400).json(r);
 });
