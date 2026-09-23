@@ -1,5 +1,4 @@
 import { cancelTriggersForSession } from "../proactive";
-import { isTestNumber, isTestHotel, TEST_GUEST_REFUSED } from "../lib/testguard";
 import { checkInGuest, checkOutGuest } from "../lib/frontdesk";
 import { prisma } from "../db";
 import { randomUUID } from "crypto";
@@ -51,8 +50,7 @@ export async function upsertRoom(hotelId: string, room: { room_number: string; r
 export async function checkInRoom(hotelId: string, roomNumber: string, opts: { guestName?: string; guestPhone?: string; partySize?: number; checkOut?: string; checkIn?: string; notes?: string }): Promise<Result<any>> {
   if (!hotelId || !roomNumber) return { ok: false, error: "roomNumber required" };
   try {
-    // test guests never land in a live hotel, and a room holding a guest is never silently handed to someone else
-    if (isTestNumber(opts.guestPhone) && !isTestHotel(hotelId)) { console.log("REFUSED test guest check-in", JSON.stringify({ hotelId, roomNumber, guest: opts.guestName ?? null, phone: opts.guestPhone ?? null })); return { ok: false, error: TEST_GUEST_REFUSED }; }
+    // a room holding a guest is never silently handed to someone else
     const current = await prisma.$queryRawUnsafe<any[]>("select status, guest_name, guest_phone from rooms where hotel_id=$1 and room_number=$2", hotelId, roomNumber);
     const digitsOf = (p: unknown) => String(p ?? "").replace(/[^0-9]/g, "").slice(-10);
     const sameGuest = digitsOf(current[0]?.guest_phone) ? digitsOf(current[0]?.guest_phone) === digitsOf(opts.guestPhone) : String(current[0]?.guest_name ?? "").trim().toLowerCase() === String(opts.guestName ?? "").trim().toLowerCase();
