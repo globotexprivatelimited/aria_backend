@@ -155,6 +155,20 @@ export async function scheduleActivityTriggers(
   await schedule(hotelId, sessionId, guestPhone, "post_activity_upsell", new Date(start.getTime() + 3 * HOURS));
 }
 
+/** A guest whose verified stay ended recently: an honest answer and a way back in, never "this number is not registered". */
+export async function answerFormerGuest(hotelId: string, hotelName: string, guestPhone: string, text: string): Promise<boolean> {
+  if (/^\s*(stop|delete|erase)\b/i.test(text)) return false;
+  const open = await prisma.session.findFirst({ where: { hotelId, guestPhone, state: { not: "closed" } }, select: { id: true } });
+  if (open) return false;
+  const last = await prisma.session.findFirst({ where: { hotelId, guestPhone, state: "closed", roomVerified: true, updatedAt: { gt: new Date(Date.now() - 14 * 24 * HOURS) } }, orderBy: { updatedAt: "desc" }, select: { claimedGuestName: true } });
+  if (!last) return false;
+  const first = (last.claimedGuestName ?? "").trim().split(" ")[0];
+  const asking = /\b(order|send|bhej|chahiye|book|table|towel|samosa|chai|coffee|tea|food|khana|nashta|breakfast|lunch|dinner|spa|massage|taxi|cab|car|clean|wifi)\b/i.test(text);
+  await sendReply(guestPhone, (first ? first + ", y" : "Y") + "our stay with us has ended, so I can't take " + (asking ? "that" : "requests") + " right now - the front desk at " + hotelName + " will gladly help with anything from your stay. And if you're back with us, reception can check you in and I'll be right here again.", hotelId);
+  log.info("former guest answered", { hotelId, phone: guestPhone });
+  return true;
+}
+
 /** Feedback is a few words of opinion - not a greeting, not a question, not a request. */
 export function looksLikeFeedback(text: string): boolean {
   const t = (text ?? "").trim();

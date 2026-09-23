@@ -1,3 +1,4 @@
+import { isNearDuplicate } from "../lib/similar";
 import { cancelOrder, cancelLatestOrder } from "../menu/orders";
 import type Anthropic from "@anthropic-ai/sdk";
 import { bookSlot } from "../slots/service";
@@ -119,19 +120,7 @@ const modeOf = (ctx: AgentContext, dept: string): string =>
   ctx.deptModes[dept] ?? (dept === "fb" || dept === "housekeeping" ? "auto" : dept === "maintenance" ? "maintenance" : "accept_decline");
 const plain = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
 
-/** Words that appear in almost every request and say nothing about what it is for - room numbers included. */
-const FILLER = new Set(["room", "guest", "guests", "needs", "need", "wants", "want", "would", "like", "requested", "request", "requests", "please", "pls", "for", "the", "and", "with", "from", "to", "in", "at", "of", "is", "are", "an", "extra", "more", "some", "send", "sent", "asked", "asks", "says", "said", "housekeeping", "maintenance", "service", "front", "desk", "concierge", "order", "total", "just", "now", "today", "tonight", "tomorrow", "asap", "urgent", "urgently", "immediately", "soon", "kindly"]);
-/** cleaned, cleaning and clean are one word here; so are towel and towels. */
-const stem = (w: string): string => (w.length > 4 ? w.replace(/(ing|ies|ed|es|s)$/, "") : w);
-const tokens = (s: string) => new Set(plain(s).split(" ").filter((w) => w.length >= 2 && !FILLER.has(w) && !/^\d{3,4}$/.test(w)).map(stem));
-/** The same ask in different words: once the filler is gone, the words they share outweigh the words they do not. */
-export function isNearDuplicate(a: string, b: string): boolean {
-  const ta = tokens(a), tb = tokens(b);
-  if (!ta.size || !tb.size) return false;
-  let shared = 0;
-  for (const w of ta) if (tb.has(w)) shared++;
-  return shared >= Math.min(2, ta.size, tb.size) && shared / (ta.size + tb.size - shared) >= 0.6;
-}
+export { isNearDuplicate };
 function alreadyDone(ctx: AgentContext, intent: string, detail: string, withinMinutes: number): DoneAction | null {
   return ctx.doneAlready.find((d) => d.intent === intent && d.minutesAgo <= withinMinutes && isNearDuplicate(d.detail, detail)) ?? null;
 }

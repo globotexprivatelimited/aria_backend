@@ -1,3 +1,4 @@
+import { similarity } from "../lib/similar";
 import { cancelAndTell, looksLikeOrderCancellation } from "../menu/orders";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
@@ -41,12 +42,10 @@ function detailTokens(s: string): Set<string> {
   );
 }
 export function detailSimilarity(a: string, b: string): number {
-  const ta = detailTokens(a), tb = detailTokens(b);
-  if (ta.size === 0 || tb.size === 0) return 0;
-  let shared = 0;
-  for (const t of ta) if (tb.has(t)) shared++;
-  return shared / new Set([...ta, ...tb]).size;
+  // judged on what a request is for - "towels for room 104" and "pillows for room 104" share filler, not substance
+  return similarity(a, b);
 }
+export { detailTokens };
 
 /** An open request for the same guest, same intent, recent, and describing the same thing. */
 async function findOpenDuplicate(hotelId: string, sessionId: string, intent: string, dept: Dept, detail: string) {
@@ -56,7 +55,7 @@ async function findOpenDuplicate(hotelId: string, sessionId: string, intent: str
     orderBy: { createdAt: "desc" },
     take: 10,
   });
-  return open.find((o) => detailSimilarity(o.requestDetail ?? "", detail) >= DEDUP_SIMILARITY) ?? null;
+  return open.find((o) => detailSimilarity(o.requestDetail ?? "", detail) >= Math.max(DEDUP_SIMILARITY, 0.6)) ?? null;
 }
 
 /** Find the staff contact who should hear about this department. */

@@ -15,7 +15,7 @@ import { understand } from "../brain";
 import { polishReply } from "../brain/polish";
 import { runAgent, useAgent } from "../agent";
 import { executeRequests } from "../executor";
-import { isProactiveOptOut, optOutOfProactive, captureFeedback } from "../proactive";
+import { isProactiveOptOut, optOutOfProactive, captureFeedback, answerFormerGuest } from "../proactive";
 
 export type InboundMessage = {
   messageId: string;
@@ -72,6 +72,8 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
 
   // a guest who has already checked out, replying after we asked how their stay was: feedback for the manager
   if (type === "text" && body && (await captureFeedback(hotel.hotelId, guestPhone, body))) return;
+  // a guest whose stay ended: no orders, but an honest answer and a door back in
+  if (type === "text" && body && (await answerFormerGuest(hotel.hotelId, hotel.name, guestPhone, body))) return;
 
   enqueue(hotel.hotelId + ":" + guestPhone, async () => {
     if (isWithdrawalKeyword(body)) {
