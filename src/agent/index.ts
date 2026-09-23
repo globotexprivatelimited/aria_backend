@@ -18,7 +18,7 @@ const MAX_TOKENS = Number(process.env.ANTHROPIC_MAX_TOKENS ?? 1200);
 const MAX_STEPS = 4;
 /** A cheaper second model reads each reply against the only material the brain was given. Set to "off" to disable. */
 const CHECK_MODEL = process.env.ANTHROPIC_CHECK_MODEL ?? "claude-haiku-4-5-20251001";
-const FALLBACK = "Thanks for your message - let me get someone from our team to help you with that right away.";
+const FALLBACK = "Let me get one of our team on this for you \u2014 someone will be with you shortly.";
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {

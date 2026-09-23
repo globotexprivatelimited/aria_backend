@@ -660,7 +660,7 @@ export function menuDigest(catalog: Catalog, dept: CatalogDept, history: Map<str
   const items = catalog.items.filter((i) => i.dept === dept && availability(i, catalog.timezone).ok);
   if (items.length === 0) return dept === "spa" ? "Our spa list is not published yet - the team can tell you what is on today." : "Our in-room menu is not published yet - the team can tell you what is on today.";
   const cats = categoriesOf(catalog, dept);
-  const title = dept === "spa" ? "Our spa services:" : dept === "dining" ? "Our restaurant menu:" : "Our in-room dining menu:";
+  const title = dept === "spa" ? "Our spa treatments:" : dept === "dining" ? "Our restaurant menu:" : "Here's what our kitchen has for you right now:";
   if (items.length > DIGEST_LIMIT && cats.length > 1) {
     const heads = cats.map((c) => c + " (" + items.filter((i) => i.category === c).length + ")");
     return title + " " + joinNatural(heads) + ". Which would you like to see?";
@@ -683,7 +683,7 @@ export function menuDigest(catalog: Catalog, dept: CatalogDept, history: Map<str
   }
   const uncategorised = rest.filter((i) => !i.category);
   if (uncategorised.length) lines.push((cats.length ? "Also: " : "") + line(uncategorised));
-  lines.push(dept === "spa" ? "Tell me which treatment and a time that suits you." : "Just tell me what you would like, and how many.");
+  lines.push(dept === "spa" ? "Tell me which treatment and when suits you, and I'll check it." : "Just tell me what you would like, and how many.");
   return lines.join("\n");
 }
 
@@ -1111,9 +1111,9 @@ function unavailableText(u: Unavailable, dept: CatalogDept): string {
   }
   const name = u.item ? u.item.name : u.ask;
   let why: string;
-  if (u.reason === "sold_out") why = name + " is sold out today.";
+  if (u.reason === "sold_out") why = name + " is finished for today, I'm afraid.";
   else if (u.reason === "not_served_now" && u.item?.servedFrom && u.item?.servedTo) why = name + " is served " + to12h(u.item.servedFrom) + " to " + to12h(u.item.servedTo) + ".";
-  else why = "Sorry, " + name + " is not on our menu.";
+  else why = "Sorry, " + name + " isn't something we offer, I'm afraid.";
   if (fallback && catLabel) return why.replace(/\.$/, "") + " and we have no " + catLabel + " right now. You might like: " + parts.join(", ") + ".";
   if (parts.length === 0 && catLabel) return why.replace(/\.$/, "") + " and we have no " + catLabel + " right now.";
   if (parts.length === 0) return why + " We do not have anything similar right now.";

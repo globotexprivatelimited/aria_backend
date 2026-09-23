@@ -59,17 +59,17 @@ function messageFor(type: TriggerType, guestName: string | null, hotelName: stri
 
   switch (type) {
     case "welcome":
-      return (name ? name.trim() + ", welcome" : "Welcome") + " to " + hotelName + "! I'm Aria - if you need anything at all during your stay, just message me here. Fresh towels, a table, a taxi, anything.";
+      return "Welcome to " + hotelName + (name ? "," + name : "") + ". I'm Aria, the concierge here \u2014 anything you need during your stay, just message me on this number: fresh towels, a table for dinner, a car to the airport. I'll take care of it.";
     case "evening_nudge":
-      return "Evening" + name + " - hope your day has been good. If you'd like a table tonight or anything sent up to your room, just say the word.";
+      return "Good evening" + (name ? "," + name : "") + ". If you'd like a table this evening, or something sent up to your room, just tell me here and I'll arrange it.";
     case "pre_checkout":
-      return "Hope you've had a lovely stay" + name + ". Is there anything you need before you check out - a late checkout, help with bags, or a car to the airport?";
+      return "I hope your stay has been a good one" + (name ? "," + name : "") + ". Before you check out \u2014 would you like help with your bags, a later checkout, or a car to the airport?";
     case "feedback":
-      return "Thank you for staying with us" + name + ". If there was anything we could have done better, I'd genuinely like to hear it - it goes straight to our manager.";
+      return "Thank you for staying with us" + (name ? "," + name : "") + ". If anything fell short, I'd genuinely like to know \u2014 it goes straight to our manager, and it's the fastest way we improve.";
     case "activity_reminder":
-      return "Just a reminder" + name + " - " + (extra ?? "your activity") + " is coming up shortly. Let me know if you need anything beforehand.";
+      return "A reminder" + (name ? "," + name : "") + " \u2014 " + (extra ?? "your activity") + " is coming up shortly. Tell me if you need anything before then.";
     case "post_activity_upsell":
-      return "How was " + (extra ?? "the activity") + name + "? If you enjoyed it, I'd be glad to arrange something similar - just let me know.";
+      return "How was " + (extra ?? "the activity") + (name ? "," + name : "") + "? If you enjoyed it, I'd be glad to arrange something similar.";
   }
 }
 

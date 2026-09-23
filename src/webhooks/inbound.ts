@@ -78,7 +78,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
   enqueue(hotel.hotelId + ":" + guestPhone, async () => {
     if (isWithdrawalKeyword(body)) {
       const er = await eraseGuestData(hotel.hotelId, guestPhone, "guest");
-      await sendReply(guestPhone, "Your data has been erased and you will not receive further messages. Thank you for staying with us.", hotel.hotelId);
+      await sendReply(guestPhone, "Done \u2014 everything has been erased, and you won't hear from me again. Thank you for staying with us.", hotel.hotelId);
       log.info("erasure on request", { phone: guestPhone, records: er.recordsWiped });
       return;
     }
@@ -102,7 +102,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
 
     if (isProactiveOptOut(body)) {
       await optOutOfProactive(session.id);
-      await sendReply(guestPhone, "Of course - I will not send you any unprompted messages. I am still here whenever you need something.", hotel.hotelId);
+      await sendReply(guestPhone, "Of course \u2014 no more messages from me unless you write first. I'm still here whenever you need anything.", hotel.hotelId);
       log.info("proactive: guest opted out", { phone: guestPhone });
       return;
     }
@@ -164,8 +164,8 @@ export function isTrivialMessage(body: string): boolean {
 
 export function trivialReply(body: string): string {
   return /thank|thx|\bty\b|shukriya|dhanyavad|dhonnobad/i.test(body)
-    ? "You're very welcome - I'm here whenever you need anything."
-    : "I'm here whenever you need anything during your stay - just say the word.";
+    ? "My pleasure. I'm here whenever you need me."
+    : "Anytime \u2014 just say the word.";
 }
 
 /** Find the hotel a webhook token belongs to. */

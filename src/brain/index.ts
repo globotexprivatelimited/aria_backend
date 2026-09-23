@@ -79,7 +79,7 @@ const RESPOND_TOOL: Anthropic.Tool = {
 
 const SAFE_FALLBACK: BrainOutput = {
   requests: [],
-  reply: "Thanks for your message - let me get someone from our team to help you with that right away.",
+  reply: "Let me get one of our team on this for you \u2014 someone will be with you shortly.",
   sentiment: "neutral",
   needsHuman: true,
 };

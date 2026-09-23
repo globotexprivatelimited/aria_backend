@@ -12,7 +12,7 @@ export async function runSelfHealing(): Promise<void> {
   const stale = await prisma.session.findMany({ where: { state: "active", lastMessageAt: { lt: cutoff }, OR: [{ checkOutDate: null }, { checkOutDate: { lt: new Date(now - 86400000) } }] } });
   for (const s of stale) {
     await prisma.session.update({ where: { id: s.id }, data: { state: "flagged" } });
-    await sendReply(s.guestPhone, "Are you still with us at the hotel? Just checking in.", s.hotelId);
+    await sendReply(s.guestPhone, "Just checking in \u2014 are you still with us? If your stay has ended, I'll stop here and wish you safe travels.", s.hotelId);
     log.info("self-heal: flagged inactive session", { sessionId: s.id });
   }
   const expiryCutoff = new Date(now - EXPIRY_DAYS * 86400 * 1000);

@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 
 export const CONSENT_NOTICE =
-  "We use your messages to handle your requests during your stay. Your data is kept only as long as needed and never shared with other guests. Reply STOP at any time to withdraw and have your data erased.";
+  "Before we begin: I keep your messages only to handle your requests during your stay, and never share them with other guests. Reply STOP at any time and everything is erased.";
 
 export async function getConsent(hotelId: string, guestPhone: string) {
   return prisma.guestConsent.findUnique({

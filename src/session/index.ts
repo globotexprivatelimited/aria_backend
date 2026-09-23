@@ -63,13 +63,13 @@ export async function runSession(hotel: SessionHotel, guestPhone: string, text: 
 
   // Only numbers registered by reception at check-in may chat.
   if (!session.roomVerified) {
-    await sendReply(guestPhone, "Hello! This number is not registered with " + hotel.name + " yet. Please ask our reception to add your WhatsApp number at check-in, and I will be right here to help with your stay.", hotel.hotelId);
+    await sendReply(guestPhone, "Hello, and welcome. I don't have this number on our guest list for " + hotel.name + " yet \u2014 ask reception to add it and I'll be right here, ready to help with anything during your stay.", hotel.hotelId);
     return { proceed: false, session };
   }
 
   if (matchesAny(text, CHECKOUT_TERMS)) {
     await closeSession(session.id, "keyword checkout");
-    await sendReply(guestPhone, "Thank you for staying with us - safe travels! Message us anytime if there's anything else.", hotel.hotelId);
+    await sendReply(guestPhone, "Thank you for staying with us \u2014 safe travels. If you've left something behind, our front desk will gladly help.", hotel.hotelId);
     return { proceed: false, session };
   }
 
@@ -80,10 +80,10 @@ export async function runSession(hotel: SessionHotel, guestPhone: string, text: 
     }
     if (matchesAny(text, NEGATE)) {
       await closeSession(session.id, "guest confirmed stay ended");
-      await sendReply(guestPhone, "Thanks for letting us know - we hope to host you again soon!", hotel.hotelId);
+      await sendReply(guestPhone, "Thank you for letting me know. It was a pleasure having you \u2014 we hope to welcome you back before long.", hotel.hotelId);
       return { proceed: false, session };
     }
-    await sendReply(guestPhone, "Are you still staying with us? (Your stay may have ended.)", hotel.hotelId);
+    await sendReply(guestPhone, "Quick check before I help \u2014 are you still with us at the hotel?", hotel.hotelId);
     return { proceed: false, session };
   }
 
@@ -92,22 +92,22 @@ export async function runSession(hotel: SessionHotel, guestPhone: string, text: 
       if (looksLikeRoomNumber(text)) {
         const room = extractRoom(text);
         session = await prisma.session.update({ where: { id: session.id }, data: { roomNumber: room } });
-        await sendReply(guestPhone, "Got it - Room " + room + ". Just to confirm, what name is the booking under?", hotel.hotelId);
+        await sendReply(guestPhone, "Room " + room + ", noted. Just to be sure I'm looking at the right stay \u2014 what name is the booking under?", hotel.hotelId);
         return { proceed: false, session };
       }
-      await sendReply(guestPhone, "Welcome! I'm Aria, your concierge. To get you set up, could you tell me your room number?", hotel.hotelId);
+      await sendReply(guestPhone, "Welcome \u2014 I'm Aria, the concierge here. Which room are you in? Then I can take care of anything you need.", hotel.hotelId);
       return { proceed: false, session };
     }
     if (!session.claimedGuestName) {
       const name = text.trim();
       if (isEvasive(name)) {
-        await sendReply(guestPhone, "Let me connect you with our front desk to get you set up properly - one moment.", hotel.hotelId);
+        await sendReply(guestPhone, "Let me get our front desk to set this up properly for you \u2014 one moment.", hotel.hotelId);
         await notifyFrontDesk(hotel.hotelId, "Could not verify Room " + session.roomNumber + " for " + guestPhone + " (no name given)");
         return { proceed: false, session };
       }
       const outcome = await verifyRoomClaim(hotel.hotelId, session.roomNumber, guestPhone, session.id);
       if (outcome === "conflict") {
-        await sendReply(guestPhone, "Let me just double-check this with our front desk - one moment.", hotel.hotelId);
+        await sendReply(guestPhone, "Let me confirm one detail with our front desk \u2014 one moment, and I'll be right back to you.", hotel.hotelId);
         await notifyFrontDesk(hotel.hotelId, "Phone " + guestPhone + " claims Room " + session.roomNumber + " but records show a different guest.");
         return { proceed: false, session };
       }
@@ -123,7 +123,7 @@ export async function runSession(hotel: SessionHotel, guestPhone: string, text: 
           lastMessageAt: new Date(),
         },
       });
-      await sendReply(guestPhone, "Perfect, you're all set, " + name + ". How can I help with your stay?", hotel.hotelId);
+      await sendReply(guestPhone, "You're all set, " + name + ". Anything you need \u2014 food, housekeeping, the spa, a car \u2014 just tell me here.", hotel.hotelId);
       return { proceed: false, session };
     }
   }
