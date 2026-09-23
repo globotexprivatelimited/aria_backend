@@ -1,4 +1,4 @@
-﻿import { log } from "./logger";
+import { log } from "./logger";
 import { prisma } from "../db";
 
 const VERSION = process.env.META_API_VERSION ?? "v21.0";
@@ -8,6 +8,12 @@ const DEFAULT_PHONE_ID = process.env.META_PHONE_NUMBER_ID ?? "";
 export function isMetaConfigured(): boolean {
   return TOKEN.length > 0 && DEFAULT_PHONE_ID.length > 0;
 }
+
+/**
+ * What Meta actually said about a send: its message id (wamid) when it accepted the message, its error when
+ * it refused. Accepted is not delivered - delivery arrives later as a status webhook against the same id.
+ */
+export type SendResult = { ok: boolean; id: string | null; error: string | null };
 
 /** Meta wants the number with country code and no plus. */
 function normalise(phone: string): string {
@@ -19,80 +25,70 @@ async function phoneIdFor(hotelId?: string): Promise<string> {
   if (!hotelId) return DEFAULT_PHONE_ID;
   try {
     const r = await prisma.$queryRawUnsafe<any[]>(
-      `select whatsapp_phone_id from "Hotel" where "hotelId" = $1`, hotelId);
+      'select whatsapp_phone_id from "Hotel" where "hotelId" = $1', hotelId);
     return r[0]?.whatsapp_phone_id || DEFAULT_PHONE_ID;
   } catch { return DEFAULT_PHONE_ID; }
 }
 
-/** A plain reply inside the 24 hour window. */
-export async function sendWhatsAppMessage(phone: string, text: string, hotelId?: string): Promise<boolean> {
+/** One send to the Cloud API, reading Meta's answer instead of assuming it. */
+async function post(phone: string, payload: Record<string, unknown>, hotelId: string | undefined, what: string): Promise<SendResult> {
   if (!isMetaConfigured()) {
-    log.warn("meta: not configured, message not sent", { phone });
-    return false;
+    log.warn("meta: not configured, " + what + " not sent", { phone });
+    return { ok: false, id: null, error: "WhatsApp is not configured on this server" };
   }
   const phoneId = await phoneIdFor(hotelId);
   try {
     const res = await fetch("https://graph.facebook.com/" + VERSION + "/" + phoneId + "/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: normalise(phone),
-        type: "text",
-        text: { preview_url: false, body: text },
-      }),
+      body: JSON.stringify({ messaging_product: "whatsapp", to: normalise(phone), ...payload }),
     });
+    const raw = await res.text();
+    let j: any = null;
+    try { j = JSON.parse(raw); } catch { /* not JSON */ }
     if (!res.ok) {
-      const body = await res.text();
-      log.error("meta: send failed", { phone, status: res.status, detail: body.slice(0, 300) });
-      return false;
+      const e = j?.error;
+      const error = e ? [e.code, e.error_subcode].filter((x: unknown) => x !== undefined && x !== null).join("/") + " " + String(e.error_data?.details ?? e.message ?? "") : "HTTP " + res.status;
+      log.error("meta: " + what + " refused", { phone, status: res.status, detail: raw.slice(0, 300) });
+      return { ok: false, id: null, error: error.trim().slice(0, 300) };
     }
-    log.info("meta: message sent", { phone, phoneId });
-    return true;
+    const id = typeof j?.messages?.[0]?.id === "string" ? String(j.messages[0].id) : null;
+    log.info("meta: " + what + " accepted", { phone, phoneId, id });
+    return { ok: true, id, error: null };
   } catch (err) {
-    log.error("meta: send threw", { phone, detail: err instanceof Error ? err.message : String(err) });
-    return false;
+    const detail = err instanceof Error ? err.message : String(err);
+    log.error("meta: " + what + " threw", { phone, detail });
+    return { ok: false, id: null, error: ("network: " + detail).slice(0, 300) };
   }
 }
 
-/** Business-initiated message - needs an approved template. */
+/** A plain text message. Meta only delivers it inside the 24 hour window the guest opens by writing. */
+export function sendText(phone: string, text: string, hotelId?: string): Promise<SendResult> {
+  return post(phone, { recipient_type: "individual", type: "text", text: { preview_url: false, body: text } }, hotelId, "message");
+}
+
+/** Template parameters may not be empty or contain new lines, tabs or runs of spaces. */
+function cleanParam(p: string): string {
+  return (String(p ?? "").replace(/\s+/g, " ").trim() || "-").slice(0, 60);
+}
+
+/** A business-initiated message from an approved template - delivered whether or not the window is open. */
+export function sendTemplate(phone: string, template: string, params: string[] = [], hotelId?: string, lang = "en"): Promise<SendResult> {
+  if (!template) return Promise.resolve({ ok: false, id: null, error: "no template name" });
+  const body = params.length ? { components: [{ type: "body", parameters: params.map((p) => ({ type: "text", text: cleanParam(p) })) }] } : {};
+  return post(phone, { type: "template", template: { name: template, language: { code: lang }, ...body } }, hotelId, "template " + template);
+}
+
+/** Kept for existing callers that only need yes or no. */
+export async function sendWhatsAppMessage(phone: string, text: string, hotelId?: string): Promise<boolean> {
+  return (await sendText(phone, text, hotelId)).ok;
+}
+
+/** Kept for existing callers that only need yes or no. */
 export async function sendTemplateMessage(
   phone: string, template: string, params: string[] = [], hotelId?: string, lang = "en"
 ): Promise<boolean> {
-  if (!isMetaConfigured() || !template) {
-    log.warn("meta: template not sent", { phone, template });
-    return false;
-  }
-  const phoneId = await phoneIdFor(hotelId);
-  try {
-    const res = await fetch("https://graph.facebook.com/" + VERSION + "/" + phoneId + "/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: normalise(phone),
-        type: "template",
-        template: {
-          name: template,
-          language: { code: lang },
-          components: params.length
-            ? [{ type: "body", parameters: params.map((p) => ({ type: "text", text: p })) }]
-            : undefined,
-        },
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      log.error("meta: template failed", { phone, template, status: res.status, detail: body.slice(0, 300) });
-      return false;
-    }
-    log.info("meta: template sent", { phone, template });
-    return true;
-  } catch (err) {
-    log.error("meta: template threw", { phone, detail: err instanceof Error ? err.message : String(err) });
-    return false;
-  }
+  return (await sendTemplate(phone, template, params, hotelId, lang)).ok;
 }
 
 /**

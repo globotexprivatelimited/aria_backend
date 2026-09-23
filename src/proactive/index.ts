@@ -1,7 +1,7 @@
 import { eveningBefore } from "../lib/localtime";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
-import { sendReply } from "../lib/notify";
+import { sendReply, sendTemplateReply } from "../lib/notify";
 
 type TriggerType =
   | "welcome"
@@ -15,6 +15,11 @@ const MINUTES = 60 * 1000;
 const HOURS = 60 * MINUTES;
 const QUIET_FROM = 21 * 60 + 30; // nothing unprompted from 21:30 on the hotel's clock
 const QUIET_TO = 8 * 60;          // until 08:00
+
+/** Unprompted messages go as approved templates, named per type on the server: META_TEMPLATE_EVENING_NUDGE, META_TEMPLATE_PRE_CHECKOUT, META_TEMPLATE_FEEDBACK. Body variables: {{1}} guest's first name, {{2}} hotel name. */
+function templateEnv(type: string): string { return "META_TEMPLATE_" + type.toUpperCase(); }
+function templateFor(type: string): string { return (process.env[templateEnv(type)] ?? "").trim(); }
+function templateLang(): string { return (process.env.META_TEMPLATE_LANG ?? "en").trim() || "en"; }
 
 /** The hotel's wall clock for an instant: local date (YYYY-MM-DD) and minutes since midnight. */
 export function hotelClock(tz: string | null, at: Date): { date: string; minutes: number } {
@@ -145,6 +150,11 @@ export async function scheduleActivityTriggers(
   await schedule(hotelId, sessionId, guestPhone, "post_activity_upsell", new Date(start.getTime() + 3 * HOURS));
 }
 
+/** After check-out, one message asking how the stay was - two hours on, never at night (quiet hours move it to the morning). */
+export async function scheduleFeedbackAfterCheckout(hotelId: string, sessionId: string, guestPhone: string): Promise<void> {
+  await schedule(hotelId, sessionId, guestPhone, "feedback", new Date(Date.now() + 2 * HOURS));
+}
+
 /** Nothing should reach a guest who has left. */
 export async function cancelTriggersForSession(sessionId: string, reason: string): Promise<void> {
   const res = await prisma.proactiveTrigger.updateMany({
@@ -167,7 +177,8 @@ export async function sendDueTriggers(): Promise<void> {
     const session = t.sessionId ? await prisma.session.findUnique({ where: { id: t.sessionId } }) : null;
 
     // The guest has checked out, or asked not to be messaged.
-    if (!session || session.state === "closed" || session.proactiveOptedOut) {
+    // the feedback request is the one message meant for a guest who has already left
+    if (!session || (session.state === "closed" && t.triggerType !== "feedback") || session.proactiveOptedOut) {
       await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { status: "cancelled" } });
       log.info("proactive: cancelled at send time", { triggerId: t.id, reason: session ? "closed or opted out" : "no session" });
       continue;
@@ -203,7 +214,22 @@ export async function sendDueTriggers(): Promise<void> {
     }
 
     const text = messageFor(t.triggerType as TriggerType, session.claimedGuestName, hotel.name);
-    await sendReply(t.guestPhone, text, t.hotelId);
+    // an approved template reaches the guest whether or not they have written in the last 24 hours; plain text only
+    // arrives inside that window - so text is used only when no template is set up and the window is still open
+    const template = templateFor(t.triggerType);
+    const windowOpen = !!session.lastMessageAt && Date.now() - new Date(session.lastMessageAt).getTime() < 23 * HOURS;
+    if (!template && !windowOpen) {
+      await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { status: "cancelled" } });
+      log.warn("proactive: not sent - no template set for it and the guest's 24 hour window is closed", { triggerId: t.id, triggerType: t.triggerType, setting: templateEnv(t.triggerType) });
+      continue;
+    }
+    const firstName = (session.claimedGuestName ?? "").trim().split(" ")[0] || "Guest";
+    const result = template ? await sendTemplateReply(t.guestPhone, template, [firstName, hotel.name], t.hotelId, text, templateLang()) : await sendReply(t.guestPhone, text, t.hotelId);
+    if (!result || !result.ok) {
+      await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { status: "cancelled" } });
+      log.warn("proactive: Meta did not accept the message", { triggerId: t.id, triggerType: t.triggerType, error: result ? result.error : "suppressed as a repeat" });
+      continue;
+    }
 
     await prisma.proactiveTrigger.update({
       where: { id: t.id },

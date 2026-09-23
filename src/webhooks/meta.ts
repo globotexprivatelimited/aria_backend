@@ -1,3 +1,4 @@
+import { recordDeliveryStatus } from "../lib/notify";
 import { Router } from "express";
 import { prisma } from "../db";
 import { handleInboundMessage } from "./inbound";
@@ -43,6 +44,7 @@ metaRouter.post("/webhooks/meta", async (req, res) => {
 
     // delivery receipts and read markers arrive here too; ignore them
     for (const st of change.statuses ?? []) {
+      void recordDeliveryStatus(String((st as any)?.id ?? ""), String((st as any)?.status ?? ""), (st as any)?.errors, (st as any)?.timestamp);
       log.info("meta: status", { id: String(st.id ?? ""), status: String(st.status ?? ""), guestPhone: String(st.recipient_id ?? ""), errors: JSON.stringify(st.errors ?? []) });
     }
     if (!change.messages?.length) return;

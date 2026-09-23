@@ -326,12 +326,16 @@ model Message {
   direction   String   @default("inbound")
   messageType String?
   body        String?
+  deliveryStatus String?
+  deliveryError  String?
+  statusAt       DateTime?
   createdAt   DateTime @default(now())
 
   hotel   Hotel    @relation(fields: [hotelId], references: [hotelId], onDelete: Cascade)
   session Session? @relation(fields: [sessionId], references: [id])
 
   @@index([hotelId, guestPhone, createdAt])
+  @@index([messageId])
 }
 
 enum ConsentStatus {
