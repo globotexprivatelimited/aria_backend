@@ -33,12 +33,10 @@ export async function getDeptModes(hotelId: string): Promise<{ dept: string; mod
   return rows.map((r) => ({ dept: r.dept, mode: r.mode as DeptMode }));
 }
 
-let auditReady = false;
 export async function setDeptMode(hotelId: string, dept: string, mode: DeptMode, changedBy = "staff"): Promise<{ ok: boolean; error?: string }> {
   if (!hotelId || !dept) return { ok: false, error: "hotelId and dept required" };
   if (!["accept_decline", "auto", "maintenance"].includes(mode)) return { ok: false, error: "invalid mode" };
   try {
-    if (!auditReady) { await prisma.$executeRawUnsafe("alter table dept_config add column if not exists changed_by text"); auditReady = true; }
     await prisma.$executeRawUnsafe(
       `insert into dept_config (hotel_id, dept, mode, updated_at, changed_by) values ($1,$2,$3, now(), $4)
        on conflict (hotel_id, dept) do update set mode = excluded.mode, updated_at = now(), changed_by = excluded.changed_by`,
