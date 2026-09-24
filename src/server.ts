@@ -184,17 +184,24 @@ app.post("/jobs/:name", async (req, res) => {
 app.use(notFound);
 app.use(errorHandler);
 
-cron.schedule("30 3 * * *", () => {
-  runRetentionPurge().catch((e) => log.error("retention job failed", { detail: String(e) }));
-});
-cron.schedule("*/5 * * * *", () => {
-  escalateStaleBookings().catch((e) => log.error("dining escalation failed", { detail: String(e) }));
-  expireWaitlistHolds().catch((e) => log.error("waitlist expiry failed", { detail: String(e) }));
-  sendDueTriggers().catch((e) => log.error("proactive send failed", { detail: String(e) }));
-});
-cron.schedule("0 * * * *", () => {
-  runSelfHealing().catch((e) => log.error("self-heal job failed", { detail: String(e) }));
-});
+// Only the one designated instance runs the schedules. A stray copy - an old service, a laptop running pnpm dev -
+// must never message guests or purge data on its own. Set ARIA_SCHEDULER=on on exactly that instance.
+if ((process.env.ARIA_SCHEDULER ?? "").toLowerCase() === "on") {
+  cron.schedule("30 3 * * *", () => {
+    runRetentionPurge().catch((e) => log.error("retention job failed", { detail: String(e) }));
+  });
+  cron.schedule("*/5 * * * *", () => {
+    escalateStaleBookings().catch((e) => log.error("dining escalation failed", { detail: String(e) }));
+    expireWaitlistHolds().catch((e) => log.error("waitlist expiry failed", { detail: String(e) }));
+    sendDueTriggers().catch((e) => log.error("proactive send failed", { detail: String(e) }));
+  });
+  cron.schedule("0 * * * *", () => {
+    runSelfHealing().catch((e) => log.error("self-heal job failed", { detail: String(e) }));
+  });
+  log.info("scheduler: on - this instance runs the scheduled jobs");
+} else {
+  log.warn("scheduler: off - set ARIA_SCHEDULER=on on exactly one instance; jobs can still be triggered over HTTP at /jobs/:name");
+}
 
 const port = Number(process.env.PORT ?? 4000);
 const server = app.listen(port, () => {

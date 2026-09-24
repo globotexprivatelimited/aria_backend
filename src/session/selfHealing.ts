@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { sendReply } from "../lib/notify";
 import { log } from "../lib/logger";
+import { hotelClock } from "../proactive";
 
 const INACTIVITY_HOURS = Number(process.env.SESSION_INACTIVITY_HOURS ?? 36);
 const EXPIRY_DAYS = Number(process.env.SESSION_EXPIRY_DAYS ?? 90);
@@ -10,7 +11,12 @@ export async function runSelfHealing(): Promise<void> {
   const now = Date.now();
   const cutoff = new Date(now - INACTIVITY_HOURS * 3600 * 1000);
   const stale = await prisma.session.findMany({ where: { state: "active", lastMessageAt: { lt: cutoff }, OR: [{ checkOutDate: null }, { checkOutDate: { lt: new Date(now - 86400000) } }] } });
+  const tz = new Map<string, string | null>();
   for (const s of stale) {
+    // never at night: "are you still with us?" at 5:30 am is worse than none - the next daytime run catches it
+    if (!tz.has(s.hotelId)) tz.set(s.hotelId, (await prisma.hotel.findUnique({ where: { hotelId: s.hotelId }, select: { timezone: true } }))?.timezone ?? null);
+    const minutes = hotelClock(tz.get(s.hotelId) ?? null, new Date()).minutes;
+    if (minutes < 9 * 60 || minutes >= 21 * 60) continue;
     await prisma.session.update({ where: { id: s.id }, data: { state: "flagged" } });
     await sendReply(s.guestPhone, "Just checking in \u2014 are you still with us? If your stay has ended, I'll stop here and wish you safe travels.", s.hotelId);
     log.info("self-heal: flagged inactive session", { sessionId: s.id });
