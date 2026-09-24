@@ -1,4 +1,4 @@
-import { sendWhatsAppMessage } from "../lib/meta";
+import { sendReply } from "../lib/notify";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { prisma } from "../db";
 
@@ -123,6 +123,10 @@ dashboardRouter.get("/api/dashboard/conversations/:phone", async (req, res) => {
       direction: m.direction,
       type: m.messageType,
       body: m.body,
+      // what Meta said about an outbound message: accepted, sent, delivered, read - or failed, with the reason
+      status: m.deliveryStatus ?? null,
+      error: m.deliveryError ?? null,
+      statusAt: m.statusAt ?? null,
     })),
   });
 });
@@ -177,9 +181,9 @@ dashboardRouter.post("/api/dashboard/conversations/:phone/reply", async (req, re
   const text = String(req.body?.text ?? "").trim();
   if (!text) return res.status(400).json({ ok: false, error: "text required" });
   if (text.length > 4000) return res.status(400).json({ ok: false, error: "Message too long (4000 characters max)." });
-  const session = await prisma.session.findFirst({ where: { hotelId, guestPhone }, orderBy: { createdAt: "desc" } });
-  const sent = await sendWhatsAppMessage(guestPhone, text, hotelId);
-  if (!sent) return res.json({ ok: false, error: "WhatsApp did not accept the message. Free-form replies only work within 24 hours of the guest last writing to you." });
-  const m = await prisma.message.create({ data: { hotelId, guestPhone, sessionId: session?.id ?? null, direction: "outbound", messageType: "text", body: text } });
-  res.json({ ok: true, data: { id: m.id, at: m.createdAt } });
+  // the same tracked send Aria uses: recorded with Meta's answer, then moved to sent / delivered / read / failed by the status webhooks
+  const result = await sendReply(guestPhone, text, hotelId);
+  if (!result) return res.json({ ok: false, error: "That exact message was sent moments ago." });
+  if (!result.ok) return res.json({ ok: false, error: "WhatsApp did not accept the message" + (result.error ? " - " + result.error : "") + ". Free-form replies only work within 24 hours of the guest last writing to you." });
+  res.json({ ok: true, data: { at: new Date().toISOString(), status: "accepted" } });
 });
