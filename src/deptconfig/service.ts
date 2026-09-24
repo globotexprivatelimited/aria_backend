@@ -42,8 +42,15 @@ export async function setDeptMode(hotelId: string, dept: string, mode: DeptMode,
        on conflict (hotel_id, dept) do update set mode = excluded.mode, updated_at = now(), changed_by = excluded.changed_by`,
       hotelId, dept, mode, String(changedBy ?? "staff").slice(0, 80));
     console.log("dept mode changed", JSON.stringify({ hotelId, dept, mode, changedBy }));
+    // every change is kept, not only the latest
+    await prisma.$executeRawUnsafe("insert into dept_config_history (hotel_id, dept, mode, changed_by) values ($1,$2,$3,$4)", hotelId, dept, mode, String(changedBy ?? "staff").slice(0, 80));
     lastLoad = 0; // force a refresh
     await loadDeptModes(hotelId);
     return { ok: true };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}
+/** Every mode change ever made at this hotel, newest first. */
+export async function getDeptModeHistory(hotelId: string, limit = 50): Promise<{ dept: string; mode: string; changedBy: string | null; changedAt: string }[]> {
+  const rows = await prisma.$queryRawUnsafe<any[]>("select dept, mode, changed_by, changed_at from dept_config_history where hotel_id = $1 order by changed_at desc limit $2", hotelId, limit);
+  return rows.map((r) => ({ dept: String(r.dept), mode: String(r.mode), changedBy: r.changed_by ?? null, changedAt: new Date(r.changed_at).toISOString() }));
 }
