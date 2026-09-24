@@ -1,0 +1,2 @@
+create table if not exists hotel_knowledge (id uuid primary key default gen_random_uuid(), hotel_id text not null, topic text not null, content text not null, category text not null default 'general', keywords text not null default '', active boolean not null default true, updated_at timestamptz not null default now());
+create index if not exists hotel_knowledge_hotel_idx on hotel_knowledge (hotel_id);

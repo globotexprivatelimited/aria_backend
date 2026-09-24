@@ -9,6 +9,7 @@ import { isTrivialMessage, trivialReply } from "../webhooks/inbound";
 import { loadDeptModes } from "../deptconfig/service";
 import { localWeather, weatherForPrompt } from "../lib/weather";
 import { knowledgeForPrompt, listFacts } from "../knowledge/service";
+import { looksLikeDistress, distressReply } from "../safety/distress";
 
 /**
  * A whole conversation through the real brain and catalogue, turn by turn, with Aria's memory carried
@@ -36,6 +37,7 @@ async function main() {
   console.log("KNOWLEDGE -> " + (await listFacts(hotelId)).length + " fact(s) written for this hotel");
   for (const message of script) {
     const t = Date.now();
+    if (looksLikeDistress(message)) { console.log("\nGUEST: " + message); console.log("ARIA (distress - handled in code before any AI, as in production):"); console.log(distressReply(message).split("\n").map((l) => "   " + l).join("\n")); console.log("   -> ALERT front desk + GM, EMERGENCY card on the board (not sent in the simulator)"); turns.push({ role: "user", content: message }, { role: "assistant", content: distressReply(message) }); continue; }
     const pending = await loadGuestContext(hotelId, TEST_PHONE);
     const knowledge = await knowledgeForPrompt(hotelId, message);
     if (useAgent()) {

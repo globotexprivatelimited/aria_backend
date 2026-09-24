@@ -129,8 +129,16 @@ export async function executeRequests(
     // Still-open request that says the same thing? Then this is a follow-up, not a new ask (D-033, D-046).
     const dup = await findOpenDuplicate(hotel.hotelId, session.id, r.intent, dept, r.detail);
     if (dup) {
+      // a guest chasing what is already filed bumps that card to urgent and pings the team - never a second card
+      const chasing = r.priority === "urgent" || r.priority === "emergency" || /\b(urgent|urgently|now|asap|immediately|still waiting|again|jaldi|abhi|turant|chase)\b/i.test(r.detail);
+      if (chasing && dup.priority !== "urgent" && dup.priority !== "emergency") {
+        await prisma.request.update({ where: { id: dup.id }, data: { priority: "urgent", requestDetail: (dup.requestDetail ?? r.detail) + " - guest chased, now URGENT" } });
+        await notifyDepartment(hotel.hotelId, dept, "[URGENT] [" + dup.id.slice(0, 8) + "] Room " + (session.roomNumber ?? "unknown") + " - the guest is chasing: " + (dup.requestDetail ?? r.detail));
+        log.info("executor: open request bumped to urgent", { existingId: dup.id, intent: r.intent });
+      } else {
+        log.info("executor: duplicate request skipped", { existingId: dup.id, intent: r.intent, detail: r.detail });
+      }
       result.deduped += 1;
-      log.info("executor: duplicate request skipped", { existingId: dup.id, intent: r.intent, detail: r.detail });
       continue;
     }
 

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AGENT_TOOLS, runTool, type AgentContext, type DoneAction } from "./tools";
 import { prisma } from "../db";
+import { languageLine } from "./language";
 import { buildAgentPrompt } from "./prompt";
 import { guardModelReply, verifyReply, type Catalog } from "../menu/catalog";
 import type { BrainOutput } from "../brain/schema";
@@ -147,7 +148,7 @@ export async function runAgent(message: string, hotel: AgentHotel, session: Agen
   const anthropic = getClient();
   if (!anthropic) { log.warn("agent: no API key set, using fallback"); return finish(FALLBACK, true, 0); }
 
-  const system = buildAgentPrompt(hotel, session, ctx.deptModes, catalog.promptText, (opts.contextText ?? "") + doneText(ctx.doneAlready) + spaHoursText(catalog));
+  const system = buildAgentPrompt(hotel, session, ctx.deptModes, catalog.promptText, (opts.contextText ?? "") + doneText(ctx.doneAlready) + spaHoursText(catalog) + languageLine(message));
   const messages = buildMessages(opts.history ?? [], message);
   const toolResults: string[] = [];
   const guestSaid = messages.filter((m) => m.role === "user" && typeof m.content === "string").map((m) => String(m.content)).join("\n");

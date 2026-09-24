@@ -1,3 +1,4 @@
+import { handleDistress } from "../safety/distress";
 import { attachWeather, loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending, fastPath, loadGuestHistory, suggestionsForPrompt } from "../menu/catalog";
 import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
@@ -69,6 +70,9 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
   if (type === "text") void sendTypingIndicator(messageId, hotel.hotelId);
 
   // show the guest "typing..." straight away, so a reply that takes a few seconds still feels live
+
+  // a guest in distress is answered and a person is sent - in code, before any AI, so it happens even when the AI is down
+  if (type === "text" && body && (await handleDistress(hotel, guestPhone, body))) return;
 
   // a guest who has already checked out, replying after we asked how their stay was: feedback for the manager
   if (type === "text" && body && (await captureFeedback(hotel.hotelId, guestPhone, body))) return;
