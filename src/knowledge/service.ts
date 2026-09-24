@@ -15,15 +15,8 @@ export const CATEGORIES = ["essentials", "rooms", "dining", "facilities", "polic
 const PROMPT_BUDGET_CHARS = 6000;
 const PROMPT_BUDGET_FACTS = 25;
 
-let tableReady = false;
-export async function ensureKnowledgeTable(): Promise<void> {
-  if (tableReady) return;
-  await prisma.$executeRawUnsafe(
-    "create table if not exists hotel_knowledge (id uuid primary key default gen_random_uuid(), hotel_id text not null, topic text not null, content text not null, category text not null default 'general', keywords text not null default '', active boolean not null default true, updated_at timestamptz not null default now())"
-  );
-  await prisma.$executeRawUnsafe("create index if not exists hotel_knowledge_hotel_idx on hotel_knowledge (hotel_id)");
-  tableReady = true;
-}
+/** The table is created by migrations/0002_hotel_knowledge.sql - schema never changes at runtime. */
+export async function ensureKnowledgeTable(): Promise<void> { /* migration-managed */ }
 
 function rowToFact(r: any): Fact {
   return { id: String(r.id), topic: String(r.topic), content: String(r.content), category: String(r.category ?? "general"), keywords: String(r.keywords ?? ""), active: r.active !== false, updatedAt: new Date(r.updated_at) };
