@@ -1,3 +1,5 @@
+import type { ConsentSource } from "../privacy/consent";
+import { recordConsent } from "../privacy/consent";
 import { prisma } from "../db";
 import { scheduleStayTriggers, cancelTriggersForSession, scheduleFeedbackAfterCheckout } from "../proactive";
 import { sendTemplateReply } from "./notify";
@@ -16,7 +18,7 @@ function dayBounds(at: Date): { start: Date; end: Date } {
   return { start, end: new Date(start.getTime() + 86400000) };
 }
 
-export async function checkInGuest(hotelId: string, room: string, name: string, phone: string, checkOut?: Date | string | null) {
+export async function checkInGuest(hotelId: string, room: string, name: string, phone: string, checkOut?: Date | string | null, optIn?: boolean | { source?: string; by?: string } | null) {
   const guestPhone = canonicalPhone(phone);
   const checkInAt = new Date();
   const data = {
@@ -69,11 +71,21 @@ export async function checkInGuest(hotelId: string, room: string, name: string, 
 
   await scheduleStayTriggers(hotelId, session.id, guestPhone, session.checkOutDate);
 
+  // Opt-in comes from the desk - the registration card line, ticked in the console - and is recorded with its source and
+  // who recorded it. Without it nothing is sent to this number until the guest writes to the hotel first.
+  const consented = optIn === true || (typeof optIn === "object" && optIn !== null);
+  if (consented) {
+    const by = typeof optIn === "object" && optIn && optIn.by ? String(optIn.by) : "staff";
+    const source = (typeof optIn === "object" && optIn && optIn.source ? String(optIn.source) : "registration_card") as ConsentSource;
+    try { await recordConsent(hotelId, guestPhone, true, source, "ticked at check-in by " + by); } catch (e) { console.log("check-in: consent not recorded:", e instanceof Error ? e.message : String(e)); }
+  } else {
+    console.log("check-in: no WhatsApp opt-in for " + guestPhone + " - the welcome is not sent; Aria answers once the guest writes first");
+  }
   // A welcome message that cannot be delivered must not cost us the check-in itself.
   try {
     const hotelRow = await prisma.hotel.findUnique({ where: { hotelId }, select: { name: true } });
     const firstName = name.trim().split(/\s+/)[0] || "Guest";
-    if (WELCOME_TEMPLATE) await sendTemplateReply(guestPhone, WELCOME_TEMPLATE, [hotelRow?.name ?? "our hotel", firstName], hotelId, "Welcome to " + (hotelRow?.name ?? "our hotel") + ", " + firstName + "! I'm Aria - message me here for anything during your stay.");
+    if (WELCOME_TEMPLATE && consented) await sendTemplateReply(guestPhone, WELCOME_TEMPLATE, [hotelRow?.name ?? "our hotel", firstName], hotelId, "Welcome to " + (hotelRow?.name ?? "our hotel") + ", " + firstName + "! I'm Aria - message me here for anything during your stay.");
   } catch (e) {
     console.log("check-in: welcome template not sent:", e instanceof Error ? e.message : String(e));
   }

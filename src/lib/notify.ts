@@ -33,6 +33,7 @@ async function recordOutbound(hotelId: string, phone: string, body: string, type
 
 /** Message a guest as plain text (inside their 24 hour window). Returns what Meta said, or null if suppressed as a repeat. */
 export async function sendReply(phone: string, text: string, hotelId: string): Promise<SendResult | null> {
+  if (!(await hasOptIn(hotelId, phone))) { log.warn("send refused: no WhatsApp opt-in on record", { hotelId: hotelId, phone: phone }); return { ok: false, id: null, error: "no WhatsApp opt-in on record - the registration card was not ticked at check-in and the guest has not written first" }; }
   log.info("outbound reply", { phone, hotelId, body: text });
   // the same text twice within seconds is a double-fire, never a reply - a guest who repeats a question ten seconds later still gets an answer
   try {
@@ -50,6 +51,7 @@ export async function sendReply(phone: string, text: string, hotelId: string): P
  * closed. shownText is what the dashboard shows for it: the template as the guest reads it.
  */
 export async function sendTemplateReply(phone: string, template: string, params: string[], hotelId: string, shownText: string, lang = "en"): Promise<SendResult> {
+  if (!(await hasOptIn(hotelId, phone))) { log.warn("send refused: no WhatsApp opt-in on record", { hotelId: hotelId, phone: phone }); return { ok: false, id: null, error: "no WhatsApp opt-in on record - the registration card was not ticked at check-in and the guest has not written first" }; }
   log.info("outbound template", { phone, hotelId, template });
   const result = await sendTemplateWithRetry(phone, template, params, hotelId, lang);
   await recordOutbound(hotelId, phone, shownText, "template", result);
@@ -193,4 +195,20 @@ export async function flushPending(hotelId: string, guestPhone: string): Promise
     log.warn("meta: could not flush held messages", { detail: e instanceof Error ? e.message : String(e) });
   }
   return sent;
+}
+
+/**
+ * No message leaves for a guest without an opt-in on record: the registration card ticked at check-in, or the guest
+ * having written to the hotel first (recorded on their first message). A withdrawn consent stops everything.
+ * CONSENT_GATE=off disables this - for a test environment only, never production.
+ */
+export async function hasOptIn(hotelId: string, guestPhone: string): Promise<boolean> {
+  if ((process.env.CONSENT_GATE ?? "on").toLowerCase() === "off") return true;
+  try {
+    const row = await prisma.guestConsent.findUnique({ where: { hotelId_guestPhone: { hotelId, guestPhone } }, select: { status: true } });
+    return row?.status === "granted";
+  } catch (e) {
+    log.warn("consent lookup failed - sending anyway", { hotelId, phone: guestPhone, detail: e instanceof Error ? e.message : String(e) });
+    return true;
+  }
 }

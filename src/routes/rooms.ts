@@ -1,3 +1,4 @@
+import { optInOf } from "../lib/optin";
 import { isAdminKey } from "../lib/security";
 import { Router } from "express";
 import { listRooms, setupRooms, upsertRoom, checkInRoom, checkOutRoom, markClean, roomStats, editRoom, deleteRoom, clearFloor, hotelRoomTarget, setCheckout, stayEvents } from "../rooms/service";
@@ -31,7 +32,7 @@ roomsRouter.post("/api/rooms/checkin", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
   console.log("ROOMS check-in", String(req.body?.hotelId ?? ""), "room " + String(req.body?.roomNumber ?? ""), String(req.body?.guestName ?? ""), String(req.body?.guestPhone ?? ""), sourceOf(req));
   const { hotelId, roomNumber, guestName, guestPhone, partySize, checkOut, checkIn, notes } = req.body ?? {};
-  const r = await checkInRoom(hotelId, roomNumber, { guestName, guestPhone, partySize, checkOut, checkIn, notes }); return res.status(r.ok ? 200 : 400).json(r);
+  const r = await checkInRoom(hotelId, roomNumber, { guestName, guestPhone, partySize, checkOut, checkIn, notes, optIn: optInOf(req) }); return res.status(r.ok ? 200 : 400).json(r);
 });
 roomsRouter.post("/api/rooms/checkout", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });

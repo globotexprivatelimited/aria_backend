@@ -1,0 +1,2 @@
+create table if not exists facilities (id uuid primary key default gen_random_uuid(), hotel_id text not null, name text not null, status text not null default 'open', closed_until date, closure_note text, open_time text, close_time text, weekend_open_time text, weekend_close_time text, location text, price text, notes text, active boolean not null default true, sort_order integer not null default 0, updated_at timestamptz not null default now(), updated_by text);
+create index if not exists facilities_hotel_idx on facilities (hotel_id, sort_order);

@@ -1,3 +1,4 @@
+import { optInOf } from "../lib/optin";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { prisma } from "../db";
 import { checkInGuest, checkOutGuest } from "../lib/frontdesk";
@@ -24,7 +25,7 @@ frontdeskRouter.post("/api/checkin", requireAdmin, async (req, res) => {
     res.status(404).json({ error: "hotel not found" });
     return;
   }
-  const session = await checkInGuest(hotelId, room, name, phone);
+  const session = await checkInGuest(hotelId, room, name, phone, undefined, optInOf(req));
   res.json({ ok: true, sessionId: session.id, state: session.state, room: session.roomNumber, verified: session.roomVerified });
 });
 

@@ -1,3 +1,4 @@
+import { facilitiesForPrompt } from "../facilities/service";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 
@@ -95,7 +96,7 @@ export function renderKnowledge(facts: Fact[]): string {
 }
 
 /** The knowledge section for one message, or an empty string when the hotel has written nothing yet. */
-export async function knowledgeForPrompt(hotelId: string, message: string): Promise<string> {
+async function knowledgeFactsForPrompt(hotelId: string, message: string): Promise<string> {
   try {
     const facts = await listFacts(hotelId);
     return renderKnowledge(selectFacts(facts, message));
@@ -103,4 +104,10 @@ export async function knowledgeForPrompt(hotelId: string, message: string): Prom
     log.warn("knowledge: could not load", { hotelId, detail: err instanceof Error ? err.message : String(err) });
     return "";
   }
+}
+
+/** Everything the brain is told about the hotel: the facts the GM wrote, then the live facility status - which wins. */
+export async function knowledgeForPrompt(hotelId: string, message: string): Promise<string> {
+  const [facts, facilities] = await Promise.all([knowledgeFactsForPrompt(hotelId, message), facilitiesForPrompt(hotelId)]);
+  return [facts, facilities].filter(Boolean).join("\n\n");
 }

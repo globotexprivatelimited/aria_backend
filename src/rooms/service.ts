@@ -47,7 +47,7 @@ export async function upsertRoom(hotelId: string, room: { room_number: string; r
 }
 
 // check a guest into a room (sets occupied + times)
-export async function checkInRoom(hotelId: string, roomNumber: string, opts: { guestName?: string; guestPhone?: string; partySize?: number; checkOut?: string; checkIn?: string; notes?: string }): Promise<Result<any>> {
+export async function checkInRoom(hotelId: string, roomNumber: string, opts: { guestName?: string; guestPhone?: string; partySize?: number; checkOut?: string; checkIn?: string; notes?: string; optIn?: { source?: string; by?: string } | null }): Promise<Result<any>> {
   if (!hotelId || !roomNumber) return { ok: false, error: "roomNumber required" };
   try {
     // a room holding a guest is never silently handed to someone else
@@ -66,7 +66,7 @@ export async function checkInRoom(hotelId: string, roomNumber: string, opts: { g
     // Link to the WhatsApp brain through the one shared check-in path: canonical phone, verified session, welcome template, stay triggers.
     if (opts.guestPhone) {
       try {
-        const session = await checkInGuest(hotelId, roomNumber, opts.guestName ?? "Guest", opts.guestPhone, opts.checkOut ?? null);
+        const session = await checkInGuest(hotelId, roomNumber, opts.guestName ?? "Guest", opts.guestPhone, opts.checkOut ?? null, opts.optIn ?? null);
         const customCheckoutTime = opts.checkOut ? new Date(opts.checkOut).toISOString() : null;
         await prisma.$executeRawUnsafe(`update "Session" set "guestName"=$2, "customCheckoutTime"=$3, "updatedAt"=now() where id=$1`, session.id, opts.guestName ?? null, customCheckoutTime);
       } catch (se) { /* session link is best-effort; room check-in still succeeds */ console.log("CHECK-IN SESSION LINK FAILED - this guest will not be recognised on WhatsApp:", se instanceof Error ? se.message : String(se)); }
