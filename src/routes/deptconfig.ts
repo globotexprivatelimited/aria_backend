@@ -1,9 +1,9 @@
+import { isAdminKey } from "../lib/security";
 import { verifyToken } from "../auth/service";
 ﻿import { Router } from "express";
 import { getDeptModes, setDeptMode, getDeptModeHistory, type DeptMode } from "../deptconfig/service";
 export const deptConfigRouter = Router();
-const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
-function checkKey(req: import("express").Request): boolean { return req.header("x-admin-key") === ADMIN_KEY; }
+function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
 
 deptConfigRouter.get("/api/dept-config", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ ok: false, error: "unauthorized" });

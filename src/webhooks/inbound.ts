@@ -4,7 +4,7 @@ import { prisma } from "../db";
 import { enqueue } from "../lib/queue";
 import { runSafetyChecks } from "../safety";
 import { runSession } from "../session";
-import { ensureConsentOnFirstContact, isWithdrawalKeyword, CONSENT_NOTICE } from "../privacy/consent";
+import { ensureConsentOnFirstContact, isWithdrawalKeyword, CONSENT_NOTICE, looksLikeOptOut } from "../privacy/consent";
 import { eraseGuestData } from "../privacy/erasure";
 import { loadDeptModes } from "../deptconfig/service";
 import { sendReply } from "../lib/notify";
@@ -104,7 +104,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
       return;
     }
 
-    if (isProactiveOptOut(body)) {
+    if ((isProactiveOptOut(body) || looksLikeOptOut(body))) {
       await optOutOfProactive(session.id);
       await sendReply(guestPhone, "Of course \u2014 no more messages from me unless you write first. I'm still here whenever you need anything.", hotel.hotelId);
       log.info("proactive: guest opted out", { phone: guestPhone });

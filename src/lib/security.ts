@@ -78,3 +78,18 @@ export function tenantGuard(req: Request, res: Response, next: NextFunction): vo
   }
   next();
 }
+
+/** Constant-time string comparison - a wrong key takes exactly as long to reject as a nearly-right one. */
+export function safeEqual(a: unknown, b: unknown): boolean {
+  if (typeof a !== "string" || typeof b !== "string" || !a || !b) return false;
+  const x = Buffer.from(a), y = Buffer.from(b);
+  if (x.length !== y.length) { timingSafeEqual(x, x); return false; }
+  return timingSafeEqual(x, y);
+}
+
+/** The platform key - or, during a rotation, the previous one (ADMIN_API_KEY_PREVIOUS), so callers can be moved over one at a time. */
+export function isAdminKey(given: unknown): boolean {
+  const current = process.env.ADMIN_API_KEY, previous = process.env.ADMIN_API_KEY_PREVIOUS;
+  if (!current) return false;
+  return safeEqual(given, current) || (!!previous && safeEqual(given, previous));
+}

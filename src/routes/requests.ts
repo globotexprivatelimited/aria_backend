@@ -1,10 +1,10 @@
+import { isAdminKey } from "../lib/security";
 import { Router } from "express";
 import { listActiveRequests, listResolvedRequests, listRequestsSince, listHotelActive, listAllActive, listAllSince, listHotelSince } from "../requests/service";
 
 export const requestsRouter = Router();
-const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
 function checkKey(req: import("express").Request): boolean {
-  return req.header("x-admin-key") === ADMIN_KEY;
+  return isAdminKey(req.header("x-admin-key"));
 }
 function parseDepts(v: unknown): string[] {
   return String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);

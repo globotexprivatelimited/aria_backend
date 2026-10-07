@@ -1,8 +1,8 @@
+import { isAdminKey } from "../lib/security";
 import { Router } from "express";
 import { listRooms, setupRooms, upsertRoom, checkInRoom, checkOutRoom, markClean, roomStats, editRoom, deleteRoom, clearFloor, hotelRoomTarget, setCheckout, stayEvents } from "../rooms/service";
 export const roomsRouter = Router();
-const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
-function checkKey(req: import("express").Request): boolean { return req.header("x-admin-key") === ADMIN_KEY; }
+function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
 
 roomsRouter.get("/api/rooms", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });

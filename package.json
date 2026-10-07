@@ -15,7 +15,10 @@
     "start": "node dist/server.js",
     "audit": "tsx src/scripts/audit.ts",
     "migrate": "node dist/scripts/migrate.js",
-    "migrate:dev": "tsx src/scripts/migrate.ts"
+    "migrate:dev": "tsx src/scripts/migrate.ts",
+    "env:doc": "tsx src/scripts/env-doc.ts",
+    "meta:check": "tsx src/scripts/meta-check.ts",
+    "latency": "tsx src/scripts/latency.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.114.0",

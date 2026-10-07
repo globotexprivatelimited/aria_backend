@@ -1,10 +1,10 @@
+import { isAdminKey } from "../lib/security";
 import { Router } from "express";
 import { listSlotsLegacy as listSlots, createSlot, updateSlotLegacy as updateSlot, deleteSlotLegacy as deleteSlot } from "../slots/service";
 
 export const slotsRouter = Router();
-const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
 function checkKey(req: import("express").Request): boolean {
-  return req.header("x-admin-key") === ADMIN_KEY;
+  return isAdminKey(req.header("x-admin-key"));
 }
 
 slotsRouter.get("/api/slots", async (req, res) => {

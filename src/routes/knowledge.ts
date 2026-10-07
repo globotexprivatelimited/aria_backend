@@ -1,3 +1,4 @@
+import { isAdminKey } from "../lib/security";
 import { Router } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { listFacts, addFact, updateFact, deleteFact, CATEGORIES } from "../knowledge/service";
@@ -9,9 +10,8 @@ import { log } from "../lib/logger";
  * paragraphs) into facts the GM approves before they are saved. Nothing here is ever specific to one hotel.
  */
 export const knowledgeRouter = Router();
-const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "dev-admin-key";
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
-function checkKey(req: import("express").Request): boolean { return req.header("x-admin-key") === ADMIN_KEY; }
+function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
 
 type Proposal = { topic: string; content: string; category: string; keywords: string };
 const str = (v: unknown, max: number): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");

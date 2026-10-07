@@ -1,0 +1,44 @@
+name: CI
+# Every push and pull request: install from the lockfile, build the schema into a throwaway Postgres, type-check, run the suite.
+# Nothing here touches production - this is the "rebuild from the repository alone" check.
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: aria
+          POSTGRES_DB: aria
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:aria@localhost:5432/aria
+      DIRECT_URL: postgresql://postgres:aria@localhost:5432/aria
+      ADMIN_API_KEY: ci-admin-key
+      JWT_SECRET: ci-jwt-secret-not-for-production
+      ANTHROPIC_API_KEY: sk-ant-ci-placeholder-no-calls-are-made
+      ANTHROPIC_CHECK_MODEL: "off"
+      ANTHROPIC_POLISH_MODEL: "off"
+      PROACTIVE_ENABLED: "false"
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm exec prisma db push --skip-generate --accept-data-loss
+      - run: pnpm migrate:dev
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test

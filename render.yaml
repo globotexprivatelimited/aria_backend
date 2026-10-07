@@ -1,42 +1,73 @@
-﻿services:
+# Render Blueprint - New > Blueprint > this repo creates everything below. The production service aria-backend-woop
+# is managed by hand in the Render dashboard and is deliberately not listed here, so applying this never touches it.
+services:
+  # Staging: the same code, a separate database, a separate AI key, a separate WhatsApp number - never production's.
   - type: web
-    name: aria-api
+    name: aria-api-staging
     runtime: node
-    plan: starter
-    region: singapore
-    rootDir: apps/api
-    buildCommand: pnpm install --frozen-lockfile && npx prisma generate && pnpm build
+    repo: https://github.com/globotexprivatelimited/aria_backend
+    branch: staging
+    plan: free
+    buildCommand: pnpm install && pnpm build && pnpm migrate
     startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
-      # set these in the Render dashboard, never in this file
+      - key: ARIA_SCHEDULER
+        value: "off"
+      - key: ARIA_BRAIN
+        value: agent
+      - key: PROACTIVE_ENABLED
+        value: "false"
       - key: DATABASE_URL
         sync: false
-      - key: DIRECT_URL
-        sync: false
-      - key: JWT_SECRET
-        generateValue: true
       - key: ADMIN_API_KEY
+        generateValue: true
+      - key: JWT_SECRET
         generateValue: true
       - key: ANTHROPIC_API_KEY
         sync: false
-      - key: SUPABASE_URL
+      - key: META_ACCESS_TOKEN
         sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      - key: META_PHONE_NUMBER_ID
         sync: false
-      - key: SMTP_USER
+      - key: META_APP_SECRET
         sync: false
-      - key: SMTP_PASS
+      - key: META_VERIFY_TOKEN
+        generateValue: true
+  # The scheduled jobs for production, as real cron jobs: each one calls the API, which also keeps the instance awake.
+  # ADMIN_API_KEY on each must equal the production service's key.
+  - type: cron
+    name: aria-jobs-every-5-min
+    runtime: node
+    repo: https://github.com/globotexprivatelimited/aria_backend
+    branch: main
+    schedule: "*/5 * * * *"
+    buildCommand: "echo no build"
+    startCommand: 'curl -fsS -m 120 -X POST -H "x-admin-key: $ADMIN_API_KEY" https://aria-backend-woop.onrender.com/jobs/every-5-min'
+    envVars:
+      - key: ADMIN_API_KEY
         sync: false
-      - key: APP_BASE_URL
+  - type: cron
+    name: aria-jobs-hourly
+    runtime: node
+    repo: https://github.com/globotexprivatelimited/aria_backend
+    branch: main
+    schedule: "7 * * * *"
+    buildCommand: "echo no build"
+    startCommand: 'curl -fsS -m 300 -X POST -H "x-admin-key: $ADMIN_API_KEY" https://aria-backend-woop.onrender.com/jobs/hourly'
+    envVars:
+      - key: ADMIN_API_KEY
         sync: false
-      - key: WATI_API_URL
+  - type: cron
+    name: aria-jobs-daily
+    runtime: node
+    repo: https://github.com/globotexprivatelimited/aria_backend
+    branch: main
+    schedule: "30 22 * * *"
+    buildCommand: "echo no build"
+    startCommand: 'curl -fsS -m 600 -X POST -H "x-admin-key: $ADMIN_API_KEY" https://aria-backend-woop.onrender.com/jobs/daily'
+    envVars:
+      - key: ADMIN_API_KEY
         sync: false
-      - key: WATI_ACCESS_TOKEN
-        sync: false
-      - key: LOG_LEVEL
-        value: info

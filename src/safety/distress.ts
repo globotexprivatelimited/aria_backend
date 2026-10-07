@@ -1,3 +1,4 @@
+import { alertOps } from "../lib/alerts";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 import { sendReply, notifyFrontDesk, notifyGM } from "../lib/notify";
@@ -48,7 +49,7 @@ export async function handleDistress(hotel: { hotelId: string; name: string }, g
   const room = session?.roomNumber ?? "unknown";
   const who = (session?.claimedGuestName ?? "").trim() || guestPhone;
   const alert = "URGENT - possible distress. Room " + room + ", " + who + " (" + guestPhone + ") wrote: \"" + text.trim().slice(0, 200) + "\". Please go to the room now and stay with the guest; call 112 if there is any danger.";
-  const attempt = async (what: string, fn: () => Promise<unknown>) => { try { await fn(); } catch (e) { log.error("distress: " + what + " failed", { detail: e instanceof Error ? e.message : String(e) }); } };
+  const attempt = async (what: string, fn: () => Promise<unknown>) => { try { await fn(); } catch (e) { log.error("distress: " + what + " failed", { detail: e instanceof Error ? e.message : String(e) }); void alertOps("distress_alert_failed", what + " for " + guestPhone + ": " + (e instanceof Error ? e.message : String(e))); } };
   await attempt("front desk alert", () => notifyFrontDesk(hotel.hotelId, alert));
   await attempt("GM alert", () => notifyGM(hotel.hotelId, alert));
   await attempt("board card", () => prisma.request.create({ data: { hotelId: hotel.hotelId, sessionId: session?.id ?? null, roomNumber: session?.roomNumber ?? null, guestPhone, intent: "concierge" as never, department: "front_desk" as never, requestDetail: "WELLBEING CHECK NOW - " + alert, priority: "emergency" as never, status: "received" } }));

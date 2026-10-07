@@ -1,3 +1,4 @@
+import { listConsent } from "../privacy/consent";
 import { sendReply } from "../lib/notify";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { prisma } from "../db";
@@ -186,4 +187,16 @@ dashboardRouter.post("/api/dashboard/conversations/:phone/reply", async (req, re
   if (!result) return res.json({ ok: false, error: "That exact message was sent moments ago." });
   if (!result.ok) return res.json({ ok: false, error: "WhatsApp did not accept the message" + (result.error ? " - " + result.error : "") + ". Free-form replies only work within 24 hours of the guest last writing to you." });
   res.json({ ok: true, data: { at: new Date().toISOString(), status: "accepted" } });
+});
+
+// Consent export - who agreed, how (registration card, wrote first, staff), and when: the privacy record Meta can ask for
+dashboardRouter.get("/api/dashboard/consent/export", async (req, res) => {
+  const hotelId = String(req.query.hotelId ?? "");
+  if (!hotelId) return res.status(400).json({ ok: false, error: "hotelId required" });
+  const rows = await listConsent(hotelId);
+  const esc = (v: unknown) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const csv = ["phone,status,source,note,granted_at,withdrawn_at,notice_version,first_seen", ...rows.map((r) => [r.guestPhone, r.status, r.source, r.note, r.grantedAt, r.withdrawnAt, r.noticeVersion, r.createdAt].map(esc).join(","))].join("\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="consent-' + hotelId + '.csv"');
+  return res.send(csv);
 });

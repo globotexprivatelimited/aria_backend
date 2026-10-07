@@ -1,3 +1,6 @@
+import { checkMetaToken } from "./lib/metaToken";
+import { markJob, systemStatus } from "./lib/status";
+import { alertOps } from "./lib/alerts";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -42,7 +45,7 @@ import { checkReady, installShutdown, inFlightCount } from "./lib/lifecycle";
 import { queueDepth } from "./lib/queue";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { tenantGuard, isPlaceholderSecret } from "./lib/security";
+import { tenantGuard, isPlaceholderSecret, isAdminKey } from "./lib/security";
 
 dotenv.config();
 
@@ -148,7 +151,7 @@ app.use(passwordResetRouter);
 // D-010: the API map is not public in production
 const docsGuard = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (process.env.NODE_ENV !== "production") return next();
-  if (req.header("x-admin-key") === process.env.ADMIN_API_KEY) return next();
+  if (isAdminKey(req.header("x-admin-key"))) return next();
   res.status(401).json({ error: "unauthorized" });
 };
 app.use("/docs", docsGuard);
@@ -164,19 +167,27 @@ app.use(
 app.get("/openapi.json", (_req, res) => res.json(openapiSpec));
 
 // Render Cron Jobs (or any scheduler) can run the same jobs over HTTP - and waking a sleeping instance to do it keeps it awake for guests too
+// What the console's banner reads: is the AI answering, is WhatsApp sending, are the jobs running, when does the token expire
+app.get("/api/system/status", (req, res) => {
+  if (!isAdminKey(req.header("x-admin-key"))) return res.status(401).json({ ok: false, error: "unauthorized" });
+  return res.json({ ok: true, data: systemStatus() });
+});
+
 app.post("/jobs/:name", async (req, res) => {
-  if (!process.env.ADMIN_API_KEY || req.header("x-admin-key") !== process.env.ADMIN_API_KEY) return res.status(401).json({ error: "unauthorized" });
+  if (!process.env.ADMIN_API_KEY || !isAdminKey(req.header("x-admin-key"))) return res.status(401).json({ error: "unauthorized" });
   const name = String(req.params.name);
   const started = Date.now();
   try {
     if (name === "every-5-min") { await escalateStaleBookings(); await expireWaitlistHolds(); await sendDueTriggers(); }
     else if (name === "hourly") await runSelfHealing();
-    else if (name === "daily") await runRetentionPurge();
+    else if (name === "daily") { await runRetentionPurge(); await checkMetaToken(); }
     else return res.status(404).json({ error: "unknown job - use every-5-min, hourly or daily" });
+    markJob(name);
     log.info("job ran over HTTP", { job: name, ms: Date.now() - started });
     return res.json({ ok: true, job: name, ms: Date.now() - started });
   } catch (e) {
     log.error("job failed over HTTP", { job: name, detail: e instanceof Error ? e.message : String(e) });
+    void alertOps("job_failed", name + " over HTTP: " + (e instanceof Error ? e.message : String(e)));
     return res.status(500).json({ ok: false, error: e instanceof Error ? e.message : String(e) });
   }
 });
@@ -188,17 +199,22 @@ app.use(errorHandler);
 // must never message guests or purge data on its own. Set ARIA_SCHEDULER=on on exactly that instance.
 if ((process.env.ARIA_SCHEDULER ?? "").toLowerCase() === "on") {
   cron.schedule("30 3 * * *", () => {
-    runRetentionPurge().catch((e) => log.error("retention job failed", { detail: String(e) }));
+    markJob("daily");
+    checkMetaToken().catch((e) => log.error("meta token check failed", { detail: String(e) }));
+    runRetentionPurge().catch((e) => { log.error("retention job failed", { detail: String(e) }); void alertOps("job_failed", "retention job failed: " + String(e)); });
   });
   cron.schedule("*/5 * * * *", () => {
-    escalateStaleBookings().catch((e) => log.error("dining escalation failed", { detail: String(e) }));
-    expireWaitlistHolds().catch((e) => log.error("waitlist expiry failed", { detail: String(e) }));
-    sendDueTriggers().catch((e) => log.error("proactive send failed", { detail: String(e) }));
+    markJob("every-5-min");
+    escalateStaleBookings().catch((e) => { log.error("dining escalation failed", { detail: String(e) }); void alertOps("job_failed", "dining escalation failed: " + String(e)); });
+    expireWaitlistHolds().catch((e) => { log.error("waitlist expiry failed", { detail: String(e) }); void alertOps("job_failed", "waitlist expiry failed: " + String(e)); });
+    sendDueTriggers().catch((e) => { log.error("proactive send failed", { detail: String(e) }); void alertOps("job_failed", "proactive send failed: " + String(e)); });
   });
   cron.schedule("0 * * * *", () => {
-    runSelfHealing().catch((e) => log.error("self-heal job failed", { detail: String(e) }));
+    markJob("hourly");
+    runSelfHealing().catch((e) => { log.error("self-heal job failed", { detail: String(e) }); void alertOps("job_failed", "self-heal job failed: " + String(e)); });
   });
   log.info("scheduler: on - this instance runs the scheduled jobs");
+  void checkMetaToken();
 } else {
   log.warn("scheduler: off - set ARIA_SCHEDULER=on on exactly one instance; jobs can still be triggered over HTTP at /jobs/:name");
 }

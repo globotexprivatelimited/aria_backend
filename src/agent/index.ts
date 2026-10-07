@@ -1,3 +1,4 @@
+import { alertOps } from "../lib/alerts";
 import Anthropic from "@anthropic-ai/sdk";
 import { AGENT_TOOLS, runTool, type AgentContext, type DoneAction } from "./tools";
 import { prisma } from "../db";
@@ -118,6 +119,13 @@ const CHECK_SYSTEM = [
 ].join("\n");
 
 /** Anything in the reply the material does not back up. Empty on any failure - a broken check must never block a reply. */
+/** An acknowledgement ("on its way!") has nothing to check; a draft that states a price, a time, an hour, a facility or a policy does. */
+export function needsFactCheck(draft: string): boolean {
+  const t = draft ?? "";
+  if (t.length > 420) return true;
+  return /\d|\u20B9|\brs\.?\b|\b(am|pm|baje|o.?clock|minutes?|hours?|open|opens|closed?|closes|khul\w*|band|available|unavailable|free|complimentary|included|policy|allowed|permitted|pool|gym|spa|wifi|wi-fi|parking|breakfast|lunch|dinner|laundry|airport|shuttle|taxi|cab|restaurant|bar|rooftop|terrace|garden|temple|beach|market|atm|pharmacy|hospital|doctor|checkout|check-out|check-in|late|early|distance|km|floor|lift|elevator|towels?|room service|menu)\b/i.test(t);
+}
+
 async function unsupportedClaims(anthropic: Anthropic, material: string, guestSaid: string, reply: string): Promise<string[]> {
   if (CHECK_MODEL.toLowerCase() === "off" || reply.length < 40) return [];
   try {
@@ -200,7 +208,7 @@ export async function runAgent(message: string, hotel: AgentHotel, session: Agen
       messages.push({ role: "user", content: results });
     }
   } catch (err) {
-    log.error("agent: failed", { detail: err instanceof Error ? err.message : String(err) });
+    log.error("agent: failed", { detail: err instanceof Error ? err.message : String(err) }); void alertOps("brain_failed", "agent: failed: " + String(err instanceof Error ? err.message : String(err)));
   }
   return finish(FALLBACK, true, MAX_STEPS);
 }
