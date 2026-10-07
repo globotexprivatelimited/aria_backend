@@ -43,3 +43,20 @@ limited to Meta's published IP ranges.
 - pnpm latency [hotel] - median and p90 reply time from the database
 - pnpm env:doc         - regenerate .env.example from the code
 - pnpm migrate:dev     - apply pending migrations to the database in .env
+
+## Settings, forms and the offer log
+
+- Quiet hours, the evening nudge window and the upsell limits are per hotel (table hotel_settings, console Settings). The code's defaults apply until a hotel saves its own: 21:30-08:00 quiet, 17:00-21:00 nudges, at most 2 offers a day, 3 hours apart. A change is live within a minute.
+- Department hours (table dept_hours) are read into every prompt with OPEN/CLOSED now; the agent is told not to order or book with a closed department and to say when it opens.
+- Knowledge base forms: Form 1 hotel essentials (hotel_profile), Form 4 spa rules (spa_rules), Form 5 services and prices (hotel_services). GET /api/forms/go-live lists the mandatory fields still empty; POST /api/forms/go-live marks the hotel onboarded only when all six are filled.
+- Upselling: the code chooses the item (pairings first, then the moment), logs it in offers as proposed, marks it offered or skipped once the reply is sent, accepted when an order contains it (revenue = price x quantity) and declined after 24 hours. GET /api/revenue/offers is the revenue-from-suggestions report; test guests are left out.
+- A hotel's own WhatsApp number: POST /api/founder/hotels/:hotelId/whatsapp with the phone-number id (and WABA id) checks it with Meta, saves it on the hotel row and subscribes the app to the WABA. Founder console: hotel page, WhatsApp card.
+
+## Load test
+
+- `pnpm loadtest --hotel <id>` starts its own copy of the API on port 4999 with META_SEND=off (nothing can reach WhatsApp), a throwaway webhook secret and the scheduler off, then plays guests through the signed webhook from fictional +1 xxx 555-01xx numbers: A 20 guests at once (U04), B a peak of 50 messages in five minutes (U05), C multi-question messages (U03).
+- It prints acks, messages processed, questions answered, reply time p50/p90/max, ordering errors, fallback replies, and the server's memory, CPU and event-loop lag (also on /api/system/status as `process`). PASS means no drops, no timeouts and no ordering errors. A JSON report goes to loadtest-reports/.
+- The AI is called for real (about 115 replies for a full run). Every row the run creates is deleted at the end; `--keep` leaves them and `pnpm loadtest --cleanup` removes them later.
+- META_SEND=off also suits a staging copy that points at the production database.
+- Guests are checked in first through the copy's own /api/checkin (rooms 92xx/93xx/94xx, no opt-in, stay reminders cancelled); --prospects plays strangers instead. The copy's log is saved beside the report, and the run prints Aria's most common replies and how many replies the server suppressed as duplicates.
+- Every scenario waits for its last answer (or the --timeout) before it is scored. The privacy notice each new guest gets on first contact is counted on its own line and never taken for an answer. A multi-question message (scenario C) that leaves a question out fails the run and names the question. Reply times are measured from the machine running the test, so on a laptop they include its round trips to Supabase and the AI service.

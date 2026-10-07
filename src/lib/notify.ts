@@ -37,8 +37,8 @@ export async function sendReply(phone: string, text: string, hotelId: string): P
   log.info("outbound reply", { phone, hotelId, body: text });
   // the same text twice within seconds is a double-fire, never a reply - a guest who repeats a question ten seconds later still gets an answer
   try {
-    const twin = await prisma.message.findFirst({ where: { hotelId, guestPhone: phone, direction: "outbound", body: text, createdAt: { gt: new Date(Date.now() - 10000) } }, select: { id: true } });
-    if (twin) { log.warn("outbound reply suppressed - identical text sent to this guest moments ago", { phone, hotelId }); return null; }
+    const twin = await prisma.message.findFirst({ where: { hotelId, guestPhone: phone, direction: "outbound", body: text, createdAt: { gt: new Date(Date.now() - 10000) } }, select: { id: true, createdAt: true } });
+    if (twin && !(await guestWroteSince(hotelId, phone, twin.createdAt))) { log.warn("outbound reply suppressed - identical text sent to this guest moments ago", { phone, hotelId }); return null; }
   } catch { /* the guard must never block a reply */ }
 
   const result = await sendWithRetry(phone, text, hotelId);
@@ -211,4 +211,9 @@ export async function hasOptIn(hotelId: string, guestPhone: string): Promise<boo
     log.warn("consent lookup failed - sending anyway", { hotelId, phone: guestPhone, detail: e instanceof Error ? e.message : String(e) });
     return true;
   }
+}
+
+/** Did the guest write again after that reply? Then the same words answer something new and must go out; only a true double - nothing new from the guest - is dropped. */
+async function guestWroteSince(hotelId: string, phone: string, at: Date): Promise<boolean> {
+  try { return !!(await prisma.message.findFirst({ where: { hotelId, guestPhone: phone, direction: "inbound", createdAt: { gt: at } }, select: { id: true } })); } catch { return false; }
 }

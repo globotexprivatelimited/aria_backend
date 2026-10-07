@@ -1,3 +1,4 @@
+import { hotelHours, inWindow, quietEndsTomorrow, hhmm } from "../settings/service";
 import { eveningBefore } from "../lib/localtime";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
@@ -13,8 +14,7 @@ type TriggerType =
 
 const MINUTES = 60 * 1000;
 const HOURS = 60 * MINUTES;
-const QUIET_FROM = 21 * 60 + 30; // nothing unprompted from 21:30 on the hotel's clock
-const QUIET_TO = 8 * 60;          // until 08:00
+// quiet hours and the evening nudge window are per hotel - src/settings/service.ts (defaults 21:30-08:00 and 17:00-21:00)
 
 /** Unprompted messages go as approved templates, named per type on the server: META_TEMPLATE_EVENING_NUDGE, META_TEMPLATE_PRE_CHECKOUT, META_TEMPLATE_FEEDBACK. Body variables: {{1}} guest's first name, {{2}} hotel name. */
 function templateEnv(type: string): string { return "META_TEMPLATE_" + type.toUpperCase(); }
@@ -248,13 +248,14 @@ export async function sendDueTriggers(): Promise<void> {
 
     // the hotel's clock decides: an evening nudge only in the evening, nothing unprompted late at night
     const clock = hotelClock(hotel.timezone ?? null, new Date());
-    if (t.triggerType === "evening_nudge" && (clock.minutes < 17 * 60 || clock.minutes >= 21 * 60)) {
+    const win = await hotelHours(t.hotelId);
+    if (t.triggerType === "evening_nudge" && !inWindow(clock.minutes, win.nudgeFrom, win.nudgeTo)) {
       await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { status: "cancelled" } });
-      log.warn("proactive: evening nudge outside 17:00-21:00 hotel time - cancelled", { triggerId: t.id, hotelMinutes: clock.minutes });
+      log.warn("proactive: evening nudge outside the hotel's nudge window - cancelled", { triggerId: t.id, hotelMinutes: clock.minutes, window: hhmm(win.nudgeFrom) + "-" + hhmm(win.nudgeTo) });
       continue;
     }
-    if (clock.minutes >= QUIET_FROM || clock.minutes < QUIET_TO) {
-      const next = atHotelTime(hotel.timezone ?? null, clock.minutes >= QUIET_FROM ? nextDay(clock.date) : clock.date, QUIET_TO / 60, 0);
+    if (inWindow(clock.minutes, win.quietFrom, win.quietTo)) {
+      const next = atHotelTime(hotel.timezone ?? null, quietEndsTomorrow(clock.minutes, win) ? nextDay(clock.date) : clock.date, Math.floor(win.quietTo / 60), win.quietTo % 60);
       await prisma.proactiveTrigger.update({ where: { id: t.id }, data: { scheduledAt: next } });
       log.info("proactive: deferred to the morning - quiet hours", { triggerId: t.id, at: next.toISOString() });
       continue;

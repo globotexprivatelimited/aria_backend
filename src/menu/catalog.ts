@@ -174,6 +174,9 @@ function availability(item: CatalogItem, tz: string | null): Availability {
 
 /* ---------------------------------------------------------------- prompt ----------- */
 
+/** Can this be ordered right now - on the menu, in stock, inside its serving hours? */
+export function isAvailableNow(item: CatalogItem, tz: string | null): boolean { return availability(item, tz).ok; }
+
 export function money(n: number): string {
   const v = Math.round(n * 100) / 100;
   return RUPEE + (Number.isInteger(v) ? v.toLocaleString("en-IN") : v.toFixed(2));

@@ -1,3 +1,4 @@
+import { offerSpoken } from "../upsell/offers";
 import { handleDistress } from "../safety/distress";
 import { attachWeather, loadCatalog, applyCatalog, loadGuestContext, recentTurns, describePending, fastPath, loadGuestHistory, suggestionsForPrompt } from "../menu/catalog";
 import { prisma } from "../db";
@@ -129,6 +130,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     if (useAgent()) {
       const agent = await runAgent(body, hotel, session, catalog, { deptModes, contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather) + "\n" + knowledge, history, guestPhone });
       await sendReply(guestPhone, agent.output.reply, hotel.hotelId);
+      void offerSpoken(hotel.hotelId, guestPhone, agent.output.reply);
       const done = await executeRequests(agent.output, hotel, session, guestPhone, messageId);
       log.info("agent result", { phone: guestPhone, room: session.roomNumber ?? "-", steps: agent.steps, usedFallback: agent.usedFallback, requests: agent.output.requests.map((r) => r.intent + ": " + r.detail).join(" | ") || "none", created: done.created, escalated: done.escalated });
       return;

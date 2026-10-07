@@ -47,7 +47,7 @@ onboardingRouter.post("/api/admin/staff", async (req, res) => {
 
 // GM lists their hotel's staff (with departments) - for the Staff page to load on refresh
 onboardingRouter.get("/api/admin/staff", async (req, res) => {
-  if (req.header("x-admin-key") !== (process.env.ADMIN_API_KEY ?? "dev-admin-key")) return res.status(401).json({ error: "unauthorized" });
+  if (!isAdminKey(req.header("x-admin-key"))) return res.status(401).json({ error: "unauthorized" });
   const hotelId = String(req.query.hotelId ?? "");
   if (!hotelId) return res.status(400).json({ error: "hotelId required" });
   const r = await listStaff(hotelId);
@@ -56,7 +56,7 @@ onboardingRouter.get("/api/admin/staff", async (req, res) => {
 
 // GM resets a staff member's password
 onboardingRouter.post("/api/admin/staff/reset-password", async (req, res) => {
-  if (req.header("x-admin-key") !== (process.env.ADMIN_API_KEY ?? "dev-admin-key")) return res.status(401).json({ error: "unauthorized" });
+  if (!isAdminKey(req.header("x-admin-key"))) return res.status(401).json({ error: "unauthorized" });
   const { hotelId, staffId, newPassword } = req.body ?? {};
   if (!hotelId || !staffId || !newPassword) return res.status(400).json({ error: "hotelId, staffId, newPassword required" });
   const r = await resetStaffPassword(hotelId, staffId, newPassword);

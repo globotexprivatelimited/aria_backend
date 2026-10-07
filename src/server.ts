@@ -1,3 +1,8 @@
+import { processStats } from "./lib/procstats";
+import { hotelWhatsappRouter } from "./routes/hotelWhatsapp";
+import { offersRouter } from "./routes/offers";
+import { formsRouter } from "./routes/forms";
+import { settingsRouter } from "./routes/settings";
 import { pairingsRouter } from "./routes/pairings";
 import { facilitiesRouter } from "./routes/facilities";
 import { checkMetaToken } from "./lib/metaToken";
@@ -138,6 +143,10 @@ app.use(authRouter);
 app.use(revenueRouter);
 app.use(facilitiesRouter);
 app.use(pairingsRouter);
+app.use(settingsRouter);
+app.use(formsRouter);
+app.use(offersRouter);
+app.use(hotelWhatsappRouter);
 app.use(roomsRouter);
 app.use(knowledgeRouter);
 app.use(deptItemsRouter);
@@ -174,7 +183,7 @@ app.get("/openapi.json", (_req, res) => res.json(openapiSpec));
 // What the console's banner reads: is the AI answering, is WhatsApp sending, are the jobs running, when does the token expire
 app.get("/api/system/status", (req, res) => {
   if (!isAdminKey(req.header("x-admin-key"))) return res.status(401).json({ ok: false, error: "unauthorized" });
-  return res.json({ ok: true, data: systemStatus() });
+  return res.json({ ok: true, data: { ...systemStatus(), process: processStats() } });
 });
 
 app.post("/jobs/:name", async (req, res) => {

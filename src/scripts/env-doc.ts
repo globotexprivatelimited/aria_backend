@@ -31,6 +31,7 @@ const DOC: Record<string, string> = {
   CONSENT_GATE: "on (default): no message leaves for a guest without an opt-in on record. off disables the gate - for a test environment only, never production",
   TEST_PHONES: "Comma-separated phone numbers that are test guests - their orders and bookings are kept out of revenue",
   TEST_PHONE_PREFIXES: "Comma-separated phone prefixes (e.g. +9199999) that mark a test guest",
+  META_SEND: "off stops every WhatsApp send (replies, templates, typing) - set by the load test on its own server copy; leave unset in production",
   OPEN_METEO_API_KEY: "Open-Meteo commercial key for live weather; unset uses the free tier",
   OPS_ALERT_EMAIL: "Comma-separated addresses that receive critical alerts (AI down, credits out, WhatsApp refusing sends, token expiring, a job failing); unset means log and banner only",
   PROACTIVE_ENABLED: "false stops all proactive messages",

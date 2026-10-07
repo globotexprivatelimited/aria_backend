@@ -6,6 +6,8 @@ const TOKEN = process.env.META_ACCESS_TOKEN ?? "";
 const DEFAULT_PHONE_ID = process.env.META_PHONE_NUMBER_ID ?? "";
 
 export function isMetaConfigured(): boolean {
+  // META_SEND=off: nothing leaves for WhatsApp at all - for load tests and a staging copy on the production database
+  if ((process.env.META_SEND ?? "").trim().toLowerCase() === "off") return false;
   return TOKEN.length > 0 && DEFAULT_PHONE_ID.length > 0;
 }
 

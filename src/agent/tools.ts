@@ -1,3 +1,4 @@
+import { offerAccepted } from "../upsell/offers";
 import { isNearDuplicate } from "../lib/similar";
 import { cancelOrder, cancelLatestOrder } from "../menu/orders";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -350,7 +351,7 @@ export async function runTool(name: string, input: Record<string, unknown>, ctx:
     switch (name) {
       case "get_spa_slots": return await getSpaSlots(input, ctx);
       case "book_spa_slot": return await bookSpaSlot(input, ctx);
-      case "place_order": return await placeOrderTool(input, ctx);
+      case "place_order": { const placed = await placeOrderTool(input, ctx); if (!ctx.dryRun && placed && (placed as { ok?: boolean }).ok) void offerAccepted(ctx.hotelId, ctx.guestPhone, JSON.stringify(placed)); return placed; }
       case "request_table": return await requestTable(input, ctx);
       case "cancel_order": {
       if (ctx.dryRun) { ctx.doneAlready = ctx.doneAlready.filter((d) => d.intent !== "room_service"); return { ok: true, cancelled: true, dry_run: true, note: "dry run - nothing cancelled" }; }
