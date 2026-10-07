@@ -1,3 +1,4 @@
+import { pairingsForPrompt } from "../menu/pairings";
 import { facilitiesForPrompt } from "../facilities/service";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
@@ -108,6 +109,6 @@ async function knowledgeFactsForPrompt(hotelId: string, message: string): Promis
 
 /** Everything the brain is told about the hotel: the facts the GM wrote, then the live facility status - which wins. */
 export async function knowledgeForPrompt(hotelId: string, message: string): Promise<string> {
-  const [facts, facilities] = await Promise.all([knowledgeFactsForPrompt(hotelId, message), facilitiesForPrompt(hotelId)]);
-  return [facts, facilities].filter(Boolean).join("\n\n");
+  const [facts, facilities, pairings] = await Promise.all([knowledgeFactsForPrompt(hotelId, message), facilitiesForPrompt(hotelId), pairingsForPrompt(hotelId)]);
+  return [facts, facilities, pairings].filter(Boolean).join("\n\n");
 }

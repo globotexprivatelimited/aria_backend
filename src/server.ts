@@ -1,3 +1,4 @@
+import { pairingsRouter } from "./routes/pairings";
 import { facilitiesRouter } from "./routes/facilities";
 import { checkMetaToken } from "./lib/metaToken";
 import { markJob, systemStatus } from "./lib/status";
@@ -136,6 +137,7 @@ app.use(requestsRouter);
 app.use(authRouter);
 app.use(revenueRouter);
 app.use(facilitiesRouter);
+app.use(pairingsRouter);
 app.use(roomsRouter);
 app.use(knowledgeRouter);
 app.use(deptItemsRouter);

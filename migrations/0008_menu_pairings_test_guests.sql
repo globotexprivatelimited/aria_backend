@@ -1,0 +1,2 @@
+create table if not exists menu_pairings (id uuid primary key default gen_random_uuid(), hotel_id text not null, item_id text not null, item_name text not null, pairs_with text, never_suggest boolean not null default false, contains text, updated_at timestamptz not null default now(), updated_by text, unique (hotel_id, item_id));
+create table if not exists test_guests (id uuid primary key default gen_random_uuid(), hotel_id text not null, phone text not null, name text, reason text, created_at timestamptz not null default now(), unique (hotel_id, phone));

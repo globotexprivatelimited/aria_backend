@@ -1,3 +1,4 @@
+import { markTestGuest } from "./testGuests";
 import type { ConsentSource } from "../privacy/consent";
 import { recordConsent } from "../privacy/consent";
 import { prisma } from "../db";
@@ -20,6 +21,7 @@ function dayBounds(at: Date): { start: Date; end: Date } {
 
 export async function checkInGuest(hotelId: string, room: string, name: string, phone: string, checkOut?: Date | string | null, optIn?: boolean | { source?: string; by?: string } | null) {
   const guestPhone = canonicalPhone(phone);
+  void markTestGuest(hotelId, guestPhone, name);
   const checkInAt = new Date();
   const data = {
     state: "active" as const,
