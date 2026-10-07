@@ -1,3 +1,4 @@
+import { alertOps } from "../lib/alerts";
 import Anthropic from "@anthropic-ai/sdk";
 import { BrainOutput, INTENTS, PRIORITIES } from "./schema";
 import { buildSystemPrompt, type DeptModeMap } from "./prompt";
@@ -159,6 +160,7 @@ export async function understand(
 
       return { output: parsed.data, usedFallback: false };
     } catch (err) {
+      void alertOps("brain_failed", "brain: call failed: " + (err instanceof Error ? err.message : String(err)));
       log.error("brain: call failed", {
         attempt,
         detail: err instanceof Error ? err.message : String(err),
