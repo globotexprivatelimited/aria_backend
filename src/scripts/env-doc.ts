@@ -25,6 +25,7 @@ const DOC: Record<string, string> = {
   META_TEMPLATE_EVENING_NUDGE: "Approved template name for the evening message; unset means text only while the 24h window is open",
   META_TEMPLATE_PRE_CHECKOUT: "Approved template name for the pre-checkout message",
   META_TEMPLATE_FEEDBACK: "Approved template name for the after-stay feedback message",
+  META_TEMPLATE_REENGAGE: "Approved template sent once a day to a guest whose 24-hour window closed while a message was waiting (default aria_hello); the held message goes when they reply",
   META_TEMPLATE_LANG: "Template language code, default en",
   WELCOME_TEMPLATE: "Approved template name for the check-in welcome (guest_welcome)",
   OPEN_METEO_API_KEY: "Open-Meteo commercial key for live weather; unset uses the free tier",

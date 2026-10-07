@@ -7,7 +7,7 @@ import { runSession } from "../session";
 import { ensureConsentOnFirstContact, isWithdrawalKeyword, CONSENT_NOTICE, looksLikeOptOut } from "../privacy/consent";
 import { eraseGuestData } from "../privacy/erasure";
 import { loadDeptModes } from "../deptconfig/service";
-import { sendReply } from "../lib/notify";
+import { sendReply, flushPending } from "../lib/notify";
 import { sendTypingIndicator } from "../lib/meta";
 import { localWeather, weatherForPrompt } from "../lib/weather";
 import { knowledgeForPrompt } from "../knowledge/service";
@@ -73,6 +73,9 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
 
   // a guest in distress is answered and a person is sent - in code, before any AI, so it happens even when the AI is down
   if (type === "text" && body && (await handleDistress(hotel, guestPhone, body))) return;
+
+  // the guest has written, so the 24-hour window is open: anything WhatsApp refused while it was closed goes now
+  await flushPending(hotel.hotelId, guestPhone);
 
   // a guest who has already checked out, replying after we asked how their stay was: feedback for the manager
   if (type === "text" && body && (await captureFeedback(hotel.hotelId, guestPhone, body))) return;
