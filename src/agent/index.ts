@@ -5,7 +5,7 @@ import { AGENT_TOOLS, runTool, type AgentContext, type DoneAction } from "./tool
 import { prisma } from "../db";
 import { languageLine } from "./language";
 import { buildAgentPrompt } from "./prompt";
-import { guardModelReply, verifyReply, type Catalog } from "../menu/catalog";
+import { guardModelReply, verifyReply, rememberStatedAmounts, type Catalog } from "../menu/catalog";
 import type { BrainOutput } from "../brain/schema";
 import type { BrainTurn } from "../brain";
 import { log } from "../lib/logger";
@@ -158,6 +158,7 @@ export async function runAgent(message: string, hotel: AgentHotel, session: Agen
   if (!anthropic) { log.warn("agent: no API key set, using fallback"); return finish(FALLBACK, true, 0); }
 
   const offerText = await offerForPrompt(ctx.hotelId, ctx.guestPhone, catalog, { dryRun: ctx.dryRun });
+  await rememberStatedAmounts(catalog, ctx.hotelId);
   const system = buildAgentPrompt(hotel, session, ctx.deptModes, catalog.promptText, (opts.contextText ?? "") + offerText + doneText(ctx.doneAlready) + spaHoursText(catalog) + languageLine(message));
   const messages = buildMessages(opts.history ?? [], message);
   const toolResults: string[] = [];

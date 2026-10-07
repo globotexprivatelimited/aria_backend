@@ -39,4 +39,10 @@ describe("the load test matches replies to messages", () => {
     const res = analyse([multi], [r("g1", 6000, "Breakfast is at 7 and the pool opens at 8.")], FB);
     expect(res.coverage).toEqual([2 / 3]); expect(res.uncovered).toEqual(["wi-?fi"]);
   });
+  test("an answer that does not mention what was asked is listed as off topic", () => {
+    const q: LtSent = { guest: "g1", topics: [/wi-?fi|password/i], ask: "What is the wifi password?", at: 0, ackMs: 5, status: 200, id: "w" };
+    const res = analyse([q], [r("g1", 5000, "How can I help?")], FB);
+    expect(res.answered).toBe(1); expect(res.verified).toBe(0);
+    expect(res.offTopic).toEqual(["What is the wifi password? -> How can I help?"]);
+  });
 });

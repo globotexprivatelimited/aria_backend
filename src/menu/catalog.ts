@@ -1487,7 +1487,7 @@ export async function applyCatalog(
   const extra = summaries.filter(Boolean).join("\n\n");
   if (!extra) {
     const dangling = /\b(below|details)\b/i.test(output.reply);
-    const cleaned = dangling && !composed ? output.reply.replace(/[^.!?]*\b(below|details)\b[^.!?]*[.!?]?/gi, "").trim() || "How can I help?" : output.reply;
+    const cleaned = dangling && !composed ? dropDanglingPointer(output.reply) : output.reply;
     return { ...output, requests: kept, reply: verifyReply(cleaned, catalog) };
   }
   let head = opener(output.reply, mentions, session.claimedGuestName ?? null, ordered);
@@ -1562,6 +1562,8 @@ export function verifyReply(reply: string, catalog: Catalog): string {
 export function guardModelReply(reply: string, catalog: Catalog): string {
   const known = new Set<number>();
   for (const i of catalog.items) if (i.price > 0) for (let k = 1; k <= 10; k++) known.add(Math.round(i.price * k));
+  const stated = statedForCatalog.get(catalog);
+  if (stated) for (const n of stated) for (let k = 1; k <= 10; k++) known.add(n * k);
   if (!known.size) return reply;
   const amountRe = /(?:\u20B9|\bRs\.?|\bINR)\s?(\d[\d,]*(?:\.\d+)?)/gi;
   const hasUnknown = (s: string) => Array.from(s.matchAll(amountRe)).some((m) => !known.has(Math.round(Number((m[1] ?? "").replace(/,/g, "")))));
@@ -1570,4 +1572,62 @@ export function guardModelReply(reply: string, catalog: Catalog): string {
   const cleaned = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   log.warn("catalog: model mentioned a price that belongs to no catalogue item - sentence removed", { reply: reply.slice(0, 240) });
   return cleaned || "Let me check that with the team - they will confirm shortly.";
+}
+
+/**
+ * "Details below" with nothing after it promises a list that never came, so that sentence goes. With the details in
+ * the same sentence, or a colon or a list bringing them straight after it - "Here are the Wi-Fi details: name,
+ * password" - it is only an introduction and the reply stays whole. Only the pointer's own sentence is ever removed.
+ */
+export function dropDanglingPointer(reply: string): string {
+  let last: RegExpExecArray | null = null;
+  const re = /\b(below|details)\b/gi;
+  for (let m = re.exec(reply); m; m = re.exec(reply)) last = m;
+  if (!last) return reply;
+  const at = last.index;
+  const alnum = (s: string): number => (s.match(/[A-Za-z0-9]/g) ?? []).length;
+  const start = Math.max(reply.lastIndexOf("\n", at), reply.lastIndexOf(".", at), reply.lastIndexOf("!", at), reply.lastIndexOf("?", at)) + 1;
+  const stop = reply.slice(at).search(/[.!?:\n]/);
+  const end = stop < 0 ? reply.length : at + stop + 1;
+  const terminator = stop < 0 ? "" : reply.charAt(end - 1);
+  const after = reply.slice(end);
+  if (alnum(reply.slice(at + last[0].length, end)) >= 12) return reply;
+  if ((terminator === ":" || terminator === "\n" || /^[ \t]*\n/.test(after)) && alnum(after) >= 3) return reply;
+  const cleaned = (reply.slice(0, start) + after).replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  return cleaned || "How can I help?";
+}
+
+/* ---- prices the hotel states outside the menu: its services (form 5), facilities, hotel profile and knowledge base ---- */
+
+const statedForCatalog = new WeakMap<object, Set<number>>();
+const statedCache = new Map<string, { at: number; amounts: number[] }>();
+
+/** Let the price guard accept these amounts for this message's catalogue. */
+export function setStatedAmounts(catalog: Catalog, amounts: number[]): void {
+  statedForCatalog.set(catalog, new Set(amounts.map((n) => Math.round(n)).filter((n) => n > 0)));
+}
+
+/** Every price the hotel itself states outside the menu - a service, a facility, late check-out in its profile, an amount in its knowledge base. Cached for a minute. */
+export async function hotelStatedAmounts(hotelId: string): Promise<number[]> {
+  const hit = statedCache.get(hotelId);
+  if (hit && Date.now() - hit.at < 60000) return hit.amounts;
+  const out = new Set<number>();
+  const add = (raw: string) => { const n = Math.round(Number(raw.replace(/,/g, ""))); if (n > 0) out.add(n); };
+  const plain = (s: unknown) => { for (const m of String(s ?? "").matchAll(/\d[\d,]*(?:\.\d+)?/g)) add(m[0]); };
+  const priced = (s: unknown) => { for (const m of String(s ?? "").matchAll(/(?:\u20B9|\bRs\.?|\bINR)\s?(\d[\d,]*(?:\.\d+)?)/gi)) add(m[1] ?? ""); };
+  const read = async (sql: string, each: (r: any) => void) => { try { for (const r of await prisma.$queryRawUnsafe<any[]>(sql, hotelId)) each(r); } catch { /* a table not there yet adds nothing */ } };
+  await Promise.all([
+    read("select price from hotel_services where hotel_id = $1 and active", (r) => plain(r.price)),
+    read("select price from facilities where hotel_id = $1 and active", (r) => plain(r.price)),
+    read("select late_checkout, early_checkin, parking, pets, row_to_json(p)::text as j from hotel_profile p where p.hotel_id = $1", (r) => { plain(r.late_checkout); plain(r.early_checkin); plain(r.parking); plain(r.pets); priced(r.j); }),
+    read("select topic, content from hotel_knowledge where hotel_id = $1 and active", (r) => { priced(r.topic); priced(r.content); }),
+  ]);
+  const amounts = Array.from(out);
+  statedCache.set(hotelId, { at: Date.now(), amounts });
+  return amounts;
+}
+
+/** Called before the model's reply is checked: the hotel's own stated prices count as known, not only the menu's. */
+export async function rememberStatedAmounts(catalog: Catalog, hotelId: string): Promise<void> {
+  try { setStatedAmounts(catalog, await hotelStatedAmounts(hotelId)); } catch { /* the guard falls back to the menu alone */ }
 }

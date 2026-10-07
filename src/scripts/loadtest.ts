@@ -111,8 +111,8 @@ async function send(phoneId: string, guest: string, body: string, topics: RegExp
   const at = Date.now();
   try {
     const r = await fetch(base + "/webhooks/meta", { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": sig }, body: raw, signal: AbortSignal.timeout(30000) });
-    return { guest: last10(guest), topics, at, ackMs: Date.now() - at, status: r.status, id };
-  } catch { return { guest: last10(guest), topics, at, ackMs: Date.now() - at, status: 0, id }; }
+    return { guest: last10(guest), topics, ask: body, at, ackMs: Date.now() - at, status: r.status, id };
+  } catch { return { guest: last10(guest), topics, ask: body, at, ackMs: Date.now() - at, status: 0, id }; }
 }
 
 const replies: LtReply[] = [];
@@ -295,7 +295,7 @@ function topicNames(sources: string[]): string {
 
 function row(name: string, r: LtResult, extra = ""): string {
   const pad = (s: string, n: number) => (s + " ".repeat(n)).slice(0, n);
-  return pad(name, 34) + pad(String(r.sent), 6) + pad(r.acked + "/" + r.sent, 8) + pad(r.processed + "/" + r.sent, 11) + pad(String(r.answered), 10) + pad(String(r.unanswered), 11) + pad(percentile(r.ackMs, 50) + "/" + Math.max(0, ...r.ackMs) + " ms", 14) + pad(fmtS(percentile(r.latenciesMs, 50)) + " / " + fmtS(percentile(r.latenciesMs, 90)) + " / " + fmtS(Math.max(0, ...r.latenciesMs)) + " s", 24) + pad(String(r.orderErrors), 8) + pad(String(r.fallbacks), 10) + extra;
+  return pad(name, 34) + pad(String(r.sent), 6) + pad(r.acked + "/" + r.sent, 8) + pad(r.processed + "/" + r.sent, 11) + pad(String(r.answered), 10) + pad(r.verified + "/" + r.answered, 10) + pad(String(r.unanswered), 11) + pad(percentile(r.ackMs, 50) + "/" + Math.max(0, ...r.ackMs) + " ms", 14) + pad(fmtS(percentile(r.latenciesMs, 50)) + " / " + fmtS(percentile(r.latenciesMs, 90)) + " / " + fmtS(Math.max(0, ...r.latenciesMs)) + " s", 24) + pad(String(r.orderErrors), 8) + pad(String(r.fallbacks), 10) + extra;
 }
 
 async function main(): Promise<number> {
@@ -362,7 +362,7 @@ async function main(): Promise<number> {
   polling = false; await poller; await sampler;
 
   console.log("");
-  console.log("scenario                          sent  acked   processed  answered  unanswered ack p50/max    reply p50 / p90 / max   order   fallback");
+  console.log("scenario                          sent  acked   processed  answered  on topic  unanswered ack p50/max    reply p50 / p90 / max   order   fallback");
   for (const x of results) console.log(row(x.name, x.r, x.key === "C" ? "  all 3 questions covered: " + x.r.coverage.filter((c) => c >= 1).length + "/" + x.r.coverage.length : ""));
   console.log("  reply times are measured from this machine: the copy reaches the database and the AI service over the internet, so they include those round trips");
   for (const x of results) if (x.r.notices) console.log("  " + x.key + " privacy notices: " + x.r.notices + " (first contact, " + fmtS(percentile(x.r.noticeMs, 50)) + " s p50) - counted apart, not as answers");
@@ -382,6 +382,7 @@ async function main(): Promise<number> {
     if (x.key === "C" && r.coverage.some((c) => c < 1)) problems.push("C: " + r.coverage.filter((c) => c < 1).length + " of " + r.coverage.length + " multi-question message(s) not fully answered - left out: " + topicNames(r.uncovered));
   }
   const warnings = results.filter((x) => x.r.fallbacks).map((x) => x.key + ": " + x.r.fallbacks + " fallback reply(ies) - the AI was not answering (rate limit or error); see the server's log");
+  for (const x of results) if (x.r.offTopic.length) warnings.push(x.key + ": " + x.r.offTopic.length + " answer(s) did not mention what was asked, e.g. " + x.r.offTopic.slice(0, 3).join(" | "));
   console.log("");
   console.log(problems.length ? "FAIL\n  " + problems.join("\n  ") : "PASS - no dropped messages, no timeouts, no ordering errors");
   if (warnings.length) console.log("WARN\n  " + warnings.join("\n  "));
