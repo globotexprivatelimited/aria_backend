@@ -174,7 +174,7 @@ export async function runAgent(message: string, hotel: AgentHotel, session: Agen
         let reply = guardModelReply(verifyReply(text, catalog), catalog).trim();
         // said once, and only what the hotel's material supports: a repeat or an unsupported claim gets one rewrite
         const repeated = repeatsEarlier(reply, opts.history ?? []);
-        const unsupported = await unsupportedClaims(anthropic, system + (toolResults.length ? "\n\nTOOL RESULTS THIS TURN:\n" + toolResults.join("\n") : ""), guestSaid, reply);
+        const unsupported = needsFactCheck(reply) ? await unsupportedClaims(anthropic, system + (toolResults.length ? "\n\nTOOL RESULTS THIS TURN:\n" + toolResults.join("\n") : ""), guestSaid, reply) : [];
         if (reply && (repeated || unsupported.length)) {
           const problems = [
             repeated ? "It repeats what you already told the guest: \"" + repeated.slice(0, 300) + "\". Say only what is new, or acknowledge in a few words." : "",
