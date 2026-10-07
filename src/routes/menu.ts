@@ -1,10 +1,10 @@
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { Router } from "express";
 import { listMenu, createMenuItem, updateMenuItem, deleteMenuItem, placeOrder, setMenuAvailability } from "../menu/service";
 
 export const menuRouter = Router();
 function checkKey(req: import("express").Request): boolean {
-  return isAdminKey(req.header("x-admin-key"));
+  return consoleCaller(req);
 }
 
 // list a hotel's menu (optionally ?dept=)

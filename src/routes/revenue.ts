@@ -1,9 +1,9 @@
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { Router } from "express";
 import { revenueSummary, revenueByChannel, revenueTimeseries, topItems, revenueByDept, revenueByHour, revenueByRoom } from "../revenue/service";
 
 export const revenueRouter = Router();
-function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
+function checkKey(req: import("express").Request): boolean { return consoleCaller(req); }
 
 revenueRouter.get("/api/revenue/summary", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });

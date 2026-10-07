@@ -1,8 +1,8 @@
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 ﻿import { Router } from "express";
 import { getMissedDemand, markAddressed } from "../misseddemand/service";
 export const missedDemandRouter = Router();
-function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
+function checkKey(req: import("express").Request): boolean { return consoleCaller(req); }
 
 missedDemandRouter.get("/api/revenue/missed", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ ok: false, error: "unauthorized" });

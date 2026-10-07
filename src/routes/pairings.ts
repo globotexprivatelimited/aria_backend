@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { staffNameOf } from "../lib/who";
 import { listPairings, setPairing, deletePairing, type PairingInput } from "../menu/pairings";
 
 export const pairingsRouter = Router();
-const authed = (req: import("express").Request): boolean => isAdminKey(req.header("x-admin-key"));
+const authed = (req: import("express").Request): boolean => consoleCaller(req);
 const fail = (res: import("express").Response, e: unknown) => res.status(400).json({ ok: false, error: e instanceof Error ? e.message : "failed" });
 
 pairingsRouter.get("/api/menu/pairings", async (req, res) => {

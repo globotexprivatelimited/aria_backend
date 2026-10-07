@@ -1,10 +1,10 @@
-import { isAdminKey } from "../lib/security";
+import { consoleCaller, founderCaller } from "../lib/security";
 import { Router } from "express";
 import { listActiveRequests, listResolvedRequests, listRequestsSince, listHotelActive, listAllActive, listAllSince, listHotelSince } from "../requests/service";
 
 export const requestsRouter = Router();
 function checkKey(req: import("express").Request): boolean {
-  return isAdminKey(req.header("x-admin-key"));
+  return consoleCaller(req);
 }
 function parseDepts(v: unknown): string[] {
   return String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -50,14 +50,14 @@ requestsRouter.get("/api/requests/hotel-active", async (req, res) => {
 
 // FOUNDER: all active across every hotel
 requestsRouter.get("/api/requests/all-active", async (req, res) => {
-  if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!founderCaller(req)) return res.status(401).json({ error: "unauthorized" });
   const r = await listAllActive();
   return res.status(r.ok ? 200 : 400).json(r);
 });
 
 // FOUNDER: all requests in last N days across every hotel
 requestsRouter.get("/api/requests/all-since", async (req, res) => {
-  if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!founderCaller(req)) return res.status(401).json({ error: "unauthorized" });
   const days = parseInt(String(req.query.days ?? "30")) || 30;
   const r = await listAllSince(days);
   return res.status(r.ok ? 200 : 400).json(r);

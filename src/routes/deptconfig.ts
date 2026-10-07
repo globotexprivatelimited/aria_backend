@@ -1,12 +1,12 @@
-import { isAdminKey } from "../lib/security";
+import { consoleCaller, ANY_HOTEL_ROLE } from "../lib/security";
 import { verifyToken } from "../auth/service";
 ﻿import { Router } from "express";
 import { getDeptModes, setDeptMode, getDeptModeHistory, type DeptMode } from "../deptconfig/service";
 export const deptConfigRouter = Router();
-function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
+function checkKey(req: import("express").Request): boolean { return consoleCaller(req); }
 
 deptConfigRouter.get("/api/dept-config", async (req, res) => {
-  if (!checkKey(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
+  if (!consoleCaller(req, ANY_HOTEL_ROLE)) return res.status(401).json({ ok: false, error: "unauthorized" });
   try {
     const data = await getDeptModes(String(req.query.hotelId ?? ""));
     return res.json({ ok: true, data });

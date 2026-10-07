@@ -1,4 +1,4 @@
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { Router } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { listFacts, addFact, updateFact, deleteFact, CATEGORIES } from "../knowledge/service";
@@ -11,7 +11,7 @@ import { log } from "../lib/logger";
  */
 export const knowledgeRouter = Router();
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
-function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
+function checkKey(req: import("express").Request): boolean { return consoleCaller(req); }
 
 type Proposal = { topic: string; content: string; category: string; keywords: string };
 const str = (v: unknown, max: number): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");

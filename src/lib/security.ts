@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction } from "express";
-import { verifyToken } from "../auth/service";
+import { verifyToken, type SessionUser } from "../auth/service";
 
 /**
  * Security helpers introduced by the Phase 1 retest fixes.
@@ -74,6 +74,8 @@ export function tenantGuard(req: Request, res: Response, next: NextFunction): vo
   // that read hotelId from the query or body get the caller's own hotel even when none was sent.
   if (!asked) {
     (req.query as Record<string, unknown>).hotelId = String(user.hotelId);
+    // Express 5 works req.query out afresh on every read, so the filled-in hotel is also set as the request's own value
+    Object.defineProperty(req, "query", { value: { ...(req.query as Record<string, unknown>), hotelId: String(user.hotelId) }, writable: true, configurable: true, enumerable: true });
     if (req.body && typeof req.body === "object") (req.body as Record<string, unknown>).hotelId = String(user.hotelId);
   }
   next();
@@ -92,4 +94,35 @@ export function isAdminKey(given: unknown): boolean {
   const current = process.env.ADMIN_API_KEY, previous = process.env.ADMIN_API_KEY_PREVIOUS;
   if (!current) return false;
   return safeEqual(given, current) || (!!previous && safeEqual(given, previous));
+}
+
+/* ---- who may call the hotel-management routes (pending item 11) ---- */
+
+/** Roles that run a hotel from the console. */
+export const MANAGER_ROLES = ["gm", "founder"];
+/** The reception desk as well as managers - check-in, check-out, the room board. */
+export const FRONT_DESK_ROLES = ["gm", "founder", "front_desk"];
+/** Everyone who works at a hotel - for what the staff board itself reads. */
+export const ANY_HOTEL_ROLE = ["gm", "founder", "front_desk", "fb", "housekeeping", "spa", "staff"];
+
+/** Who signed in, from a verified Bearer token - null without one or with a forged one. */
+export function sessionOf(req: Request): SessionUser | null {
+  const auth = req.header("authorization") ?? "";
+  return auth.startsWith("Bearer ") ? verifyToken(auth.slice(7)) : null;
+}
+
+/**
+ * The console's way in: a signed-in person with one of these roles - tenantGuard has already held them to their own
+ * hotel, founders excepted - or, for scripts and scheduled jobs, the platform key. A role not listed is refused, so a
+ * housekeeper's sign-in no longer opens the manager's routes.
+ */
+export function consoleCaller(req: Request, roles: string[] = MANAGER_ROLES): boolean {
+  if (isAdminKey(req.header("x-admin-key"))) return true;
+  const user = sessionOf(req);
+  return !!user && roles.includes(String(user.role));
+}
+
+/** Routes that see or change every hotel: a founder's sign-in or the platform key, nobody else. */
+export function founderCaller(req: Request): boolean {
+  return consoleCaller(req, ["founder"]);
 }

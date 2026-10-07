@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { staffNameOf } from "../lib/who";
 import { getProfile, setProfile, getSpaRules, setSpaRules, checkSpaRules, listServices, addService, updateService, deleteService, goLiveCheck, goLive, MANDATORY, type ProfileInput, type SpaRulesInput, type ServiceInput } from "../knowledge/forms";
 
 export const formsRouter = Router();
-const authed = (req: import("express").Request): boolean => isAdminKey(req.header("x-admin-key"));
+const authed = (req: import("express").Request): boolean => consoleCaller(req);
 const fail = (res: import("express").Response, e: unknown) => res.status(400).json({ ok: false, error: e instanceof Error ? e.message : "failed" });
 const hotelOf = (req: import("express").Request): string => String(req.query.hotelId ?? (req.body ?? {}).hotelId ?? "");
 

@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { staffNameOf } from "../lib/who";
 import { listFacilities, addFacility, updateFacility, deleteFacility, checkFacility, type FacilityInput } from "../facilities/service";
 
 export const facilitiesRouter = Router();
-const authed = (req: import("express").Request): boolean => isAdminKey(req.header("x-admin-key"));
+const authed = (req: import("express").Request): boolean => consoleCaller(req);
 const fail = (res: import("express").Response, e: unknown) => res.status(400).json({ ok: false, error: e instanceof Error ? e.message : "failed" });
 
 facilitiesRouter.get("/api/facilities", async (req, res) => {

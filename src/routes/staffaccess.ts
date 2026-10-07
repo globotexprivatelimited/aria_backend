@@ -1,8 +1,8 @@
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { Router } from "express";
 import { getStaffAccess, setStaffDeptAccess } from "../staffaccess/service";
 export const staffAccessRouter = Router();
-function checkKey(req: import("express").Request): boolean { return isAdminKey(req.header("x-admin-key")); }
+function checkKey(req: import("express").Request): boolean { return consoleCaller(req); }
 
 staffAccessRouter.get("/api/staff-access", async (req, res) => {
   if (!checkKey(req)) return res.status(401).json({ error: "unauthorized" });

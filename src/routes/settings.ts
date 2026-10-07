@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { isAdminKey } from "../lib/security";
+import { consoleCaller } from "../lib/security";
 import { staffNameOf } from "../lib/who";
 import { hotelHours, setHotelHours, hoursForApi, listDeptHours, setDeptHours, deleteDeptHours, checkDeptHours, DEPARTMENTS, type HoursInput, type DeptHoursInput } from "../settings/service";
 
 export const settingsRouter = Router();
-const authed = (req: import("express").Request): boolean => isAdminKey(req.header("x-admin-key"));
+const authed = (req: import("express").Request): boolean => consoleCaller(req);
 const fail = (res: import("express").Response, e: unknown) => res.status(400).json({ ok: false, error: e instanceof Error ? e.message : "failed" });
 
 /** Quiet hours, the evening nudge window, how often an upsell may be offered. */

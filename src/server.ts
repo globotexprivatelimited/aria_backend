@@ -52,7 +52,7 @@ import { checkReady, installShutdown, inFlightCount } from "./lib/lifecycle";
 import { queueDepth } from "./lib/queue";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { tenantGuard, isPlaceholderSecret, isAdminKey } from "./lib/security";
+import { tenantGuard, isPlaceholderSecret, isAdminKey, consoleCaller } from "./lib/security";
 
 dotenv.config();
 
@@ -182,7 +182,7 @@ app.get("/openapi.json", (_req, res) => res.json(openapiSpec));
 // Render Cron Jobs (or any scheduler) can run the same jobs over HTTP - and waking a sleeping instance to do it keeps it awake for guests too
 // What the console's banner reads: is the AI answering, is WhatsApp sending, are the jobs running, when does the token expire
 app.get("/api/system/status", (req, res) => {
-  if (!isAdminKey(req.header("x-admin-key"))) return res.status(401).json({ ok: false, error: "unauthorized" });
+  if (!consoleCaller(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
   return res.json({ ok: true, data: { ...systemStatus(), process: processStats() } });
 });
 
