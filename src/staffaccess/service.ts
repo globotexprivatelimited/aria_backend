@@ -26,6 +26,9 @@ export async function setStaffDeptAccess(hotelId: string, staffId: string, dept:
   if (!sid || !d) return { ok: false, error: "staffId and dept required (staffId=" + JSON.stringify(staffId) + ", dept=" + JSON.stringify(dept) + ")" };
   try {
     await ensureStaffActiveColumn();
+    // the staff member must work at this hotel - a GM of one hotel cannot change another hotel's staff (item 11)
+    const mine = await prisma.$queryRawUnsafe<any[]>(`select 1 from staff_users where id::text=$1 and hotel_id=$2`, sid, String(hotelId ?? ""));
+    if (!mine[0]) return { ok: false, error: "Staff member not found for this hotel." };
     // Try update first using text comparison (avoids any uuid-cast issues)
     const updated = await prisma.$executeRawUnsafe(
       `update staff_departments set active=$3 where staff_user_id::text=$1 and dept=$2`, sid, d, active);

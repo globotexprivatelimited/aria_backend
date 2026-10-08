@@ -46,8 +46,9 @@ export async function addSlot(a: {
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
 }
 
-export async function updateSlot(id: string, patch: { capacity?: number; active?: boolean; days?: string[]; label?: string }): Promise<Result<{ ok: true }>> {
+export async function updateSlot(id: string, patch: { capacity?: number; active?: boolean; days?: string[]; label?: string }, hotelId: string): Promise<Result<{ ok: true }>> {
   try {
+    if (!(await slotBelongsTo(id, hotelId))) return { ok: false, error: "That slot is not one of this hotel's." };
     if (patch.capacity != null) await prisma.$executeRawUnsafe(`update time_slots set capacity=$2 where id=$1::uuid`, id, patch.capacity);
     if (patch.active != null) await prisma.$executeRawUnsafe(`update time_slots set active=$2 where id=$1::uuid`, id, patch.active);
     if (patch.days) await prisma.$executeRawUnsafe(`update time_slots set days=$2 where id=$1::uuid`, id, patch.days.join(","));
@@ -56,8 +57,9 @@ export async function updateSlot(id: string, patch: { capacity?: number; active?
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
 }
 
-export async function deleteSlot(id: string): Promise<Result<{ ok: true }>> {
+export async function deleteSlot(id: string, hotelId: string): Promise<Result<{ ok: true }>> {
   try {
+    if (!(await slotBelongsTo(id, hotelId))) return { ok: false, error: "That slot is not one of this hotel's." };
     await prisma.$executeRawUnsafe(`delete from time_slots where id=$1::uuid`, id);
     return { ok: true, data: { ok: true } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
@@ -154,8 +156,9 @@ export async function listBookings(hotelId: string, dept: string, onDate: string
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
 }
 
-export async function cancelBooking(id: string): Promise<Result<{ ok: true }>> {
+export async function cancelBooking(id: string, hotelId: string): Promise<Result<{ ok: true }>> {
   try {
+    if (!(await bookingBelongsTo(id, hotelId))) return { ok: false, error: "That booking is not one of this hotel's." };
     await prisma.$executeRawUnsafe(`update slot_bookings set state='cancelled' where id=$1::uuid`, id);
     return { ok: true, data: { ok: true } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
@@ -199,4 +202,20 @@ export async function deleteSlotLegacy(hotelId: string, id: string): Promise<Res
     await prisma.$executeRawUnsafe(`delete from time_slots where id=$1::uuid and hotel_id=$2`, id, hotelId);
     return { ok: true, data: { ok: true } };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "failed" }; }
+}
+
+/* ---- a slot or booking changed by its id must belong to the caller's hotel (item 11) ---- */
+
+/** True only when this slot is one of this hotel's. A text match, so an id that is not a uuid is simply not found. */
+async function slotBelongsTo(id: string, hotelId: string): Promise<boolean> {
+  if (!id || !hotelId) return false;
+  const rows = await prisma.$queryRawUnsafe<any[]>(`select 1 from time_slots where id::text=$1 and hotel_id=$2`, String(id), String(hotelId));
+  return rows.length > 0;
+}
+
+/** True only when this booking is one of this hotel's. */
+async function bookingBelongsTo(id: string, hotelId: string): Promise<boolean> {
+  if (!id || !hotelId) return false;
+  const rows = await prisma.$queryRawUnsafe<any[]>(`select 1 from slot_bookings where id::text=$1 and hotel_id=$2`, String(id), String(hotelId));
+  return rows.length > 0;
 }

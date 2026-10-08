@@ -35,13 +35,13 @@ slotBookingRouter.post("/api/booking/slots/update", async (req, res) => {
     active: b.active != null ? !!b.active : undefined,
     days: Array.isArray(b.days) ? b.days : undefined,
     label: b.label,
-  });
+  }, u.hotelId);
   return res.status(r.ok ? 200 : 400).json(r);
 });
 
 slotBookingRouter.post("/api/booking/slots/remove", async (req, res) => {
   const u = user(req); if (!u) return res.status(401).json({ ok: false, error: "Not signed in." });
-  const r = await deleteSlot(String(req.body?.id ?? ""));
+  const r = await deleteSlot(String(req.body?.id ?? ""), u.hotelId);
   return res.status(r.ok ? 200 : 400).json(r);
 });
 
@@ -71,6 +71,6 @@ slotBookingRouter.get("/api/booking/slots/bookings", async (req, res) => {
 
 slotBookingRouter.post("/api/booking/slots/cancel", async (req, res) => {
   const u = user(req); if (!u) return res.status(401).json({ ok: false, error: "Not signed in." });
-  const r = await cancelBooking(String(req.body?.id ?? ""));
+  const r = await cancelBooking(String(req.body?.id ?? ""), u.hotelId);
   return res.status(r.ok ? 200 : 400).json(r);
 });
