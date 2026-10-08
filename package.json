@@ -20,7 +20,8 @@
     "meta:check": "tsx src/scripts/meta-check.ts",
     "latency": "tsx src/scripts/latency.ts",
     "loadtest": "tsx src/scripts/loadtest.ts",
-    "ai:cost": "tsx src/scripts/ai-cost.ts"
+    "ai:cost": "tsx src/scripts/ai-cost.ts",
+    "timing": "tsx src/scripts/timing.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.114.0",

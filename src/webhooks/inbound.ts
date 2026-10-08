@@ -19,6 +19,7 @@ import { runAgent, useAgent } from "../agent";
 import { executeRequests } from "../executor";
 import { isProactiveOptOut, optOutOfProactive, captureFeedback, answerFormerGuest } from "../proactive";
 import { usageForHotel } from "../lib/aiUsage";
+import { stageTimer } from "../lib/stageTimer";
 
 export type InboundMessage = {
   messageId: string;
@@ -33,6 +34,8 @@ export type InboundMessage = {
  */
 export async function handleInboundMessage(hotel: any, msg: InboundMessage): Promise<void> {
   const { messageId } = msg;
+  // where this guest's wait goes, stage by stage - logged as "reply timing" and summed up by pnpm timing (item 16)
+  const replyClock = stageTimer();
   // providers differ on the leading plus - store one shape everywhere
   const raw = (msg.guestPhone || "").trim();
   const guestPhone = raw.startsWith("+") ? raw : "+" + raw.replace(/[^0-9]/g, "");
@@ -70,23 +73,28 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
 
   // show the guest "typing..." straight away, so a reply that takes a few seconds still feels live
   if (type === "text") void sendTypingIndicator(messageId, hotel.hotelId);
+  replyClock.mark("store");
 
   // show the guest "typing..." straight away, so a reply that takes a few seconds still feels live
 
   // a guest in distress is answered and a person is sent - in code, before any AI, so it happens even when the AI is down
   if (type === "text" && body && (await handleDistress(hotel, guestPhone, body))) return;
+  replyClock.mark("distress");
 
   // the guest has written, so the 24-hour window is open: anything WhatsApp refused while it was closed goes now
   await flushPending(hotel.hotelId, guestPhone);
+  replyClock.mark("flush");
 
   // a guest who has already checked out, replying after we asked how their stay was: feedback for the manager
   if (type === "text" && body && (await captureFeedback(hotel.hotelId, guestPhone, body))) return;
   // a guest whose stay ended: no orders, but an honest answer and a door back in
   if (type === "text" && body && (await answerFormerGuest(hotel.hotelId, hotel.name, guestPhone, body))) return;
+  replyClock.mark("former");
 
   enqueue(hotel.hotelId + ":" + guestPhone, async () => {
     // every Claude call made while answering this message - the brain, polish, the agent - is charged to this hotel (item 18)
     usageForHotel(hotel.hotelId);
+    replyClock.mark("queue");
     if (isWithdrawalKeyword(body)) {
       const er = await eraseGuestData(hotel.hotelId, guestPhone, "guest");
       await sendReply(guestPhone, "Done \u2014 everything has been erased, and you won't hear from me again. Thank you for staying with us.", hotel.hotelId);
@@ -98,14 +106,17 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     if (!consentState.existing) {
       await sendReply(guestPhone, CONSENT_NOTICE, hotel.hotelId);
     }
+    replyClock.mark("consent");
 
     const safety = await runSafetyChecks(body, hotel, guestPhone);
+    replyClock.mark("safety");
     if (safety.handled) {
       log.info("safety handled - AI skipped", { phone: guestPhone, reason: safety.reason });
       return;
     }
 
     const { proceed, session } = await runSession(hotel, guestPhone, body);
+    replyClock.mark("session");
     if (!proceed) {
       log.info("session handled - AI skipped", { phone: guestPhone, state: session.state });
       return;
@@ -120,6 +131,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
 
     // everything the brain needs, fetched at once rather than one after another
     const [deptModeEntries, catalog, pending, history, ordersBefore, weather, knowledge] = await Promise.all([loadDeptModes(hotel.hotelId), loadCatalog(hotel.hotelId, hotel.timezone ?? null), loadGuestContext(hotel.hotelId, guestPhone), recentTurns(hotel.hotelId, guestPhone, messageId), loadGuestHistory(hotel.hotelId, guestPhone), localWeather(hotel.hotelId), knowledgeForPrompt(hotel.hotelId, body)]);
+    replyClock.mark("context");
     attachWeather(catalog, weather);
     const deptModes = Object.fromEntries(deptModeEntries);
     // a bare thanks, ok, punctuation or emoji carries no request: answer it without the model (D-034)
@@ -141,15 +153,22 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     // a plain answer to an offer Aria just made needs no model call at all
     const fast = fastPath(body, pending, catalog);
     const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather) + "\n" + knowledge }, session, { history });
+    replyClock.mark(fast ? "fastpath" : "brain");
     const usedFallback = brain.usedFallback;
     await rememberStatedAmounts(catalog, hotel.hotelId);
     const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body, deptModes });
+    replyClock.mark("catalog");
 
     // the server wrote part of this reply (a receipt, a booking, a promise): Claude says it in its own voice, every number locked
     const replyText = output.reply.replace(/[*#\s]/g, "") !== brain.output.reply.replace(/[*#\s]/g, "") ? await polishReply(output.reply, body) : output.reply;
+    replyClock.mark("polish");
     await sendReply(guestPhone, replyText, hotel.hotelId);
+    replyClock.mark("send");
+    replyClock.replied();
 
     const exec = await executeRequests(output, hotel, session, guestPhone, messageId);
+    replyClock.mark("requests");
+    log.info("reply timing", { phone: guestPhone, ...replyClock.summary() });
 
     log.info("brain result", {
       phone: guestPhone,
