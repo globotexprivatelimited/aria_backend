@@ -44,11 +44,12 @@ export function usageScope(req: Request, _res: Response, next: NextFunction): vo
   scope.run({ hotelId: h ? String(h) : null }, next);
 }
 
-/** Charges the rest of this piece of work - a guest message being answered - to this hotel. */
+/**
+ * Charges the rest of this piece of work - a guest message being answered - to this hotel. It always starts a fresh
+ * record and never edits one that other work may share, so two hotels answered at the same time never swap charges.
+ */
 export function usageForHotel(hotelId: string | null | undefined): void {
-  const h = hotelId ? String(hotelId) : null;
-  const s = scope.getStore();
-  if (s) { if (h) s.hotelId = h; } else scope.enterWith({ hotelId: h });
+  if (hotelId) scope.enterWith({ hotelId: String(hotelId) });
 }
 
 /* ---- recording ---- */

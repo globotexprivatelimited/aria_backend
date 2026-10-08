@@ -42,6 +42,14 @@ describe("what each Claude call costs (item 18)", () => {
     await settle();
     expect(inserts().map((a) => a[0])).toEqual([null, "B"]);
   });
+  test("two hotels answered at the same time are each charged for their own calls", async () => {
+    // as inbound.ts does: each guest's work is queued behind the last, tags its hotel, waits, then asks Claude
+    const client = meteredClaude("brain");
+    const answer = (hotelId: string) => async (): Promise<void> => { usageForHotel(hotelId); await settle(); await client.messages.create(ask as never); };
+    await new Promise<void>((resolve) => usageScope({ query: {}, body: {} } as never, {} as never, () => { void Promise.all([Promise.resolve().then(answer("A")), Promise.resolve().then(answer("B"))]).then(() => resolve()); }));
+    await settle();
+    expect(inserts().map((a) => a[0]).sort()).toEqual(["A", "B"]);
+  });
   test("a database that cannot record never breaks the reply", async () => {
     mockDb.fail = true;
     const reply = await meteredClaude("polish").messages.create(ask as never);
