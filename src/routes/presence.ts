@@ -1,3 +1,4 @@
+import { consoleCaller } from "../lib/security";
 ﻿import { Router } from "express";
 import { verifyToken } from "../auth/service";
 import { touchPresence, getDepartmentPresence } from "../presence/service";
@@ -15,6 +16,8 @@ presenceRouter.post("/api/presence/heartbeat", async (req, res) => {
 
 // GM departments page reads who is online
 presenceRouter.get("/api/presence/departments", async (req, res) => {
+  // a signed-in GM or founder for their own hotel (tenantGuard), or the platform key - this list was open to anyone (item 11)
+  if (!consoleCaller(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
   const r = await getDepartmentPresence(String(req.query.hotelId ?? ""));
   return res.status(r.ok ? 200 : 400).json(r);
 });

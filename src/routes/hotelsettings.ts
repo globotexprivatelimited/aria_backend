@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { consoleCaller } from "../lib/security";
 import { prisma } from "../db";
 import { log } from "../lib/logger";
 
@@ -10,16 +11,16 @@ import { log } from "../lib/logger";
  */
 export const hotelSettingsRouter = Router();
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const key = process.env.ADMIN_API_KEY ?? "";
-  if (!key || req.header("x-admin-key") !== key) {
+/** A signed-in GM or founder - tenantGuard holds a GM to their own hotel - or the platform key for scripts (item 11). */
+function requireManager(req: Request, res: Response, next: NextFunction) {
+  if (!consoleCaller(req)) {
     res.status(401).json({ ok: false, error: "unauthorized" });
     return;
   }
   next();
 }
 
-hotelSettingsRouter.get("/api/hotel/settings", requireAdmin, async (req, res) => {
+hotelSettingsRouter.get("/api/hotel/settings", requireManager, async (req, res) => {
   const hotelId = String(req.query.hotelId ?? "");
   if (!hotelId) return res.status(400).json({ ok: false, error: "hotelId required" });
   const rows = await prisma.$queryRawUnsafe<any[]>(
@@ -29,7 +30,7 @@ hotelSettingsRouter.get("/api/hotel/settings", requireAdmin, async (req, res) =>
 });
 
 /** Turn hotel-wide emergency mode on or off. While on, every guest message gets the emergency notice and the AI is skipped. */
-hotelSettingsRouter.post("/api/hotel/emergency-mode", requireAdmin, async (req, res) => {
+hotelSettingsRouter.post("/api/hotel/emergency-mode", requireManager, async (req, res) => {
   const { hotelId, enabled, by } = req.body ?? {};
   if (!hotelId || typeof enabled !== "boolean") return res.status(400).json({ ok: false, error: "hotelId and enabled (true/false) required" });
   const rows = await prisma.$queryRawUnsafe<any[]>(

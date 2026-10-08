@@ -1,14 +1,15 @@
 import { listConsent } from "../privacy/consent";
 import { sendReply } from "../lib/notify";
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { consoleCaller } from "../lib/security";
 import { prisma } from "../db";
 
 export const dashboardRouter = Router();
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const key = process.env.ADMIN_API_KEY ?? "";
-  if (!key || req.header("x-admin-key") !== key) {
-    res.status(401).json({ error: "unauthorized" });
+/** A signed-in GM or founder - tenantGuard holds a GM to their own hotel - or the platform key for scripts (item 11). */
+function requireManager(req: Request, res: Response, next: NextFunction) {
+  if (!consoleCaller(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized" });
     return;
   }
   next();
@@ -24,7 +25,7 @@ function startOfToday(): Date {
   return d;
 }
 
-dashboardRouter.use("/api/dashboard", requireAdmin);
+dashboardRouter.use("/api/dashboard", requireManager);
 
 /** 1. Overview - the numbers a GM checks first */
 dashboardRouter.get("/api/dashboard/overview", async (req, res) => {
