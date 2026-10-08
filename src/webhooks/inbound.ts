@@ -18,6 +18,7 @@ import { polishReply } from "../brain/polish";
 import { runAgent, useAgent } from "../agent";
 import { executeRequests } from "../executor";
 import { isProactiveOptOut, optOutOfProactive, captureFeedback, answerFormerGuest } from "../proactive";
+import { usageForHotel } from "../lib/aiUsage";
 
 export type InboundMessage = {
   messageId: string;
@@ -139,6 +140,7 @@ export async function handleInboundMessage(hotel: any, msg: InboundMessage): Pro
     const fast = fastPath(body, pending, catalog);
     const brain = fast ? { output: fast, usedFallback: false } : await understand(body, { ...hotel, deptModes, catalogText: catalog.promptText, pendingText: describePending(pending), contextText: suggestionsForPrompt(catalog, ordersBefore) + "\n" + weatherForPrompt(weather) + "\n" + knowledge }, session, { history });
     const usedFallback = brain.usedFallback;
+    usageForHotel(hotel.hotelId);
     await rememberStatedAmounts(catalog, hotel.hotelId);
     const output = await applyCatalog(brain.output, catalog, hotel.hotelId, session, guestPhone, { pending, message: body, deptModes });
 

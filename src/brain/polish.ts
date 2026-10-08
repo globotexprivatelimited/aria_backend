@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { log } from "../lib/logger";
+import { meteredClaude } from "../lib/aiUsage";
 
 /**
  * The server works out the facts of a confirmation - items, totals, times - so they are exact; Claude then
@@ -37,7 +38,7 @@ export function keepsTheFacts(draft: string, polished: string): boolean {
 /** Claude's voice on the server's facts; the exact draft whenever the rewrite fails or changes a number. */
 export async function polishReply(draft: string, guestMessage: string): Promise<string> {
   if (MODEL === "off" || !process.env.ANTHROPIC_API_KEY || !draft.trim()) return draft;
-  if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (!client) client = meteredClaude("polish");
   try {
     const res = await client.messages.create({ model: MODEL, max_tokens: 500, system: SYSTEM, messages: [{ role: "user", content: "The guest wrote: " + guestMessage + "\n\nDraft reply:\n" + draft }] }, { timeout: 6000, maxRetries: 0 });
     const text = res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("").trim();

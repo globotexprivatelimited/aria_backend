@@ -3,6 +3,7 @@ import { Router } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { listFacts, addFact, updateFact, deleteFact, CATEGORIES } from "../knowledge/service";
 import { log } from "../lib/logger";
+import { meteredClaude } from "../lib/aiUsage";
 
 /**
  * The hotel's knowledge base, maintained by the hotel itself from the GM console: list, add, edit,
@@ -102,7 +103,7 @@ knowledgeRouter.post("/api/knowledge/extract", async (req, res) => {
   if (source.length < 20) return res.status(400).json({ ok: false, error: "Paste some text about the hotel first" });
   if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ ok: false, error: "The AI is not configured on this server" });
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = meteredClaude("knowledge");
     const existing = await listFacts(String(hotelId));
     const onFile = existing.length ? "Facts already on file (do not repeat; propose a changed detail only if the text differs):\n" + existing.map((f) => "- " + f.topic + ": " + f.content).join("\n") + "\n\n" : "";
     const r = await client.messages.create({

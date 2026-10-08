@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { BrainOutput, INTENTS, PRIORITIES } from "./schema";
 import { buildSystemPrompt, type DeptModeMap } from "./prompt";
 import { log } from "../lib/logger";
+import { meteredClaude } from "../lib/aiUsage";
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
 const MAX_TOKENS = Number(process.env.ANTHROPIC_MAX_TOKENS ?? 1200);
@@ -10,7 +11,7 @@ const MAX_TOKENS = Number(process.env.ANTHROPIC_MAX_TOKENS ?? 1200);
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {
   if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (!client) client = meteredClaude("brain");
   return client;
 }
 

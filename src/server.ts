@@ -53,6 +53,8 @@ import { queueDepth } from "./lib/queue";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { tenantGuard, isPlaceholderSecret, isAdminKey, consoleCaller } from "./lib/security";
+import { usageScope } from "./lib/aiUsage";
+import { aiUsageRouter } from "./routes/aiusage";
 
 dotenv.config();
 
@@ -99,6 +101,7 @@ app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/set-password", loginLimiter);
 // D-005: a signed-in staff member may only touch their own hotel (founders see all)
 app.use("/api", tenantGuard);
+app.use("/api", usageScope);
 
 app.use((req, res, next) => {
   const started = Date.now();
@@ -158,6 +161,7 @@ app.use(deptDetailRouter);
 app.use(missedDemandRouter);
 app.use(emailVerifyRouter);
 app.use(founderRouter);
+app.use(aiUsageRouter);
 app.use(slotBookingRouter);
 app.use(passwordResetRouter);
 

@@ -9,6 +9,7 @@ import { guardModelReply, verifyReply, rememberStatedAmounts, type Catalog } fro
 import type { BrainOutput } from "../brain/schema";
 import type { BrainTurn } from "../brain";
 import { log } from "../lib/logger";
+import { meteredClaude, usageForHotel } from "../lib/aiUsage";
 
 /**
  * The agent brain (ARIA_BRAIN=agent). Claude reads the live hotel from its prompt, acts through tools that
@@ -26,7 +27,7 @@ const FALLBACK = "Let me get one of our team on this for you \u2014 someone will
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {
   if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (!client) client = meteredClaude("agent");
   return client;
 }
 
@@ -159,6 +160,7 @@ export async function runAgent(message: string, hotel: AgentHotel, session: Agen
 
   const offerText = await offerForPrompt(ctx.hotelId, ctx.guestPhone, catalog, { dryRun: ctx.dryRun });
   await rememberStatedAmounts(catalog, ctx.hotelId);
+  usageForHotel(ctx.hotelId);
   const system = buildAgentPrompt(hotel, session, ctx.deptModes, catalog.promptText, (opts.contextText ?? "") + offerText + doneText(ctx.doneAlready) + spaHoursText(catalog) + languageLine(message));
   const messages = buildMessages(opts.history ?? [], message);
   const toolResults: string[] = [];
