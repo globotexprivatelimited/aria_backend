@@ -57,19 +57,18 @@ function menuSection(catalogText?: string): string[] {
   ];
 }
 
-export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap, catalogText?: string, pendingText?: string, contextText?: string): string {
+export function systemPromptParts(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap, catalogText?: string, pendingText?: string, contextText?: string): { stable: string; variable: string } {
   const room = session.roomNumber ?? "unknown";
   const name = session.claimedGuestName ?? "the guest";
 
-  return [
+  const [moment, menuText] = splitMoment(catalogText);
+
+  // Two parts so Claude can cache the first (item 18). 'stable' is the same for every guest of this hotel until its menu,
+  // its department settings or this code change, and later messages read it back at a tenth of the input price.
+  // 'variable' is this guest and this moment. Claude is told exactly what it was told before - only the order changed.
+  const stable = [
     "You are Aria, the guest concierge for " + hotel.name + ".",
     "You reply to guests over WhatsApp. You are warm, brief and genuinely helpful - the tone of an excellent front-of-house host, never robotic and never gushing.",
-    "",
-    "CURRENT GUEST",
-    "- Name: " + name,
-    "- Room: " + room,
-    "- Room verified by front desk: " + (session.roomVerified ? "yes" : "no"),
-    hotel.timezone ? "- Hotel timezone: " + hotel.timezone : "",
     "",
     "YOUR TASK",
     "Read the guest's message and answer by calling the respond tool - never answer in plain text. Its fields follow this shape:",
@@ -102,9 +101,7 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     "human_required  - a complaint, a refund, a billing question, anything needing judgement",
     "emergency       - danger to a person (this should already have been caught upstream)",
     "",
-    ...menuSection(catalogText),
-    ...(contextText ? ["", contextText] : []),
-    ...(pendingText ? ["", "PENDING OFFER: " + pendingText] : []),
+    ...menuSection(menuText),
     "RULES - these matter more than being helpful:",
     "1. DECOMPOSE. One message can contain several requests. 'Towels and a table for two' is TWO requests. Each gets its own entry.",
     "2. NEVER INVENT. Do not confirm a service, price, time or facility you were not told about. If unsure, say the team will confirm shortly.",
@@ -122,8 +119,56 @@ export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, de
     "14. CANCEL OR CHANGE. If the guest asks to cancel, stop or change a request, order or booking, return exactly ONE request with intent concierge, priority human_required and detail saying what to cancel. Never place a new order, book anything or accept a pending offer in that same message.",
     "15. PROMISES ARE REAL. If your reply says you will check, ask, find out or get back to the guest, you must file it in the same answer - intent concierge, detail saying exactly what to check - so a person actually does it. If you are not filing it, do not offer it.",
     "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const variable = [
+    "CURRENT GUEST",
+    "- Name: " + name,
+    "- Room: " + room,
+    "- Room verified by front desk: " + (session.roomVerified ? "yes" : "no"),
+    hotel.timezone ? "- Hotel timezone: " + hotel.timezone : "",
+    moment,
+    ...(contextText ? ["", contextText] : []),
+    ...(pendingText ? ["", "PENDING OFFER: " + pendingText] : []),
+    "",
     "Call the respond tool exactly once.",
   ]
     .filter(Boolean)
     .join("\n");
+  return { stable, variable };
+}
+
+/** The whole system prompt as one text - the hotel's part, then this guest's. Scripts and tests read it this way. */
+export function buildSystemPrompt(hotel: PromptHotel, session: PromptSession, deptModes?: DeptModeMap, catalogText?: string, pendingText?: string, contextText?: string): string {
+  const p = systemPromptParts(hotel, session, deptModes, catalogText, pendingText, contextText);
+  return p.stable + "\n" + p.variable;
+}
+
+/** The catalog opens with the hour ("NOW AT THE HOTEL: ... 14:00 local"), which changes every hour - it travels with the guest's part, not the cached menu. */
+function splitMoment(catalogText?: string): [string, string | undefined] {
+  if (!catalogText || !catalogText.startsWith("NOW AT THE HOTEL:")) return ["", catalogText];
+  const k = catalogText.indexOf("\n\n");
+  return k < 0 ? ["", catalogText] : [catalogText.slice(0, k), catalogText.slice(k + 2)];
+}
+
+/** How long Claude keeps a hotel's part of the prompt: ARIA_PROMPT_CACHE=1h (the default), 5m, or off. */
+export function promptCacheTtl(): "1h" | "5m" | null {
+  const v = String(process.env.ARIA_PROMPT_CACHE ?? "1h").trim().toLowerCase();
+  if (v === "off" || v === "0" || v === "false" || v === "no" || v === "none") return null;
+  return v === "5m" ? "5m" : "1h";
+}
+
+export type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
+
+/**
+ * The system prompt as Claude receives it: the hotel's part marked for caching, then this guest's part. A 1-hour cache
+ * costs 2x the input price to write and 0.1x to read, and each read keeps it another hour, so it costs less than no
+ * cache from the third message that comes within an hour of the one before. The tool definition sits before the
+ * system prompt, so it is cached with it.
+ */
+export function systemBlocks(parts: { stable: string; variable: string }, ttl: "1h" | "5m" | null = promptCacheTtl()): SystemBlock[] {
+  const first: SystemBlock = { type: "text", text: parts.stable };
+  if (ttl) first.cache_control = ttl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+  return parts.variable ? [first, { type: "text", text: parts.variable }] : [first];
 }

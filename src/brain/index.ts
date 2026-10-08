@@ -1,7 +1,7 @@
 import { alertOps } from "../lib/alerts";
 import Anthropic from "@anthropic-ai/sdk";
 import { BrainOutput, INTENTS, PRIORITIES } from "./schema";
-import { buildSystemPrompt, type DeptModeMap } from "./prompt";
+import { type DeptModeMap, systemPromptParts, systemBlocks } from "./prompt";
 import { log } from "../lib/logger";
 import { meteredClaude } from "../lib/aiUsage";
 
@@ -98,11 +98,11 @@ function buildMessages(history: BrainTurn[], message: string): Anthropic.Message
     if (!content) continue;
     if (out.length === 0 && t.role !== "user") continue;
     const last = out[out.length - 1];
-    if (last && last.role === t.role) last.content = String(last.content) + "`n" + content;
+    if (last && last.role === t.role) last.content = String(last.content) + "\n" + content;
     else out.push({ role: t.role, content });
   }
   const last = out[out.length - 1];
-  if (last && last.role === "user") last.content = String(last.content) + "`n" + message;
+  if (last && last.role === "user") last.content = String(last.content) + "\n" + message;
   else out.push({ role: "user", content: message });
   return out;
 }
@@ -119,7 +119,8 @@ export async function understand(
     return { output: SAFE_FALLBACK, usedFallback: true };
   }
 
-  const system = buildSystemPrompt(hotel, session, hotel.deptModes, hotel.catalogText, hotel.pendingText, hotel.contextText);
+  // the hotel's part of the prompt is cached by Claude and read back at a tenth of the price; this guest's part follows it (item 18, ARIA_PROMPT_CACHE)
+  const system = systemBlocks(systemPromptParts(hotel, session, hotel.deptModes, hotel.catalogText, hotel.pendingText, hotel.contextText));
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -157,6 +158,8 @@ export async function understand(
         via: call ? "tool" : "text",
         inputTokens: res.usage.input_tokens,
         outputTokens: res.usage.output_tokens,
+        cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
       });
 
       return { output: parsed.data, usedFallback: false };

@@ -23,13 +23,13 @@ async function main(): Promise<void> {
   try {
     const r = await usageReport(days);
     console.log("Claude cost over the last " + r.days + " day(s), since " + r.since.slice(0, 10));
-    console.log("total: " + r.total.calls + " calls, " + k(r.total.inputTokens) + " in, " + k(r.total.outputTokens) + " out, " + k(r.total.cacheReadTokens) + " cache read - " + usd(r.total.costUsd));
+    console.log("total: " + r.total.calls + " calls, " + k(r.total.inputTokens) + " in, " + k(r.total.outputTokens) + " out, " + k(r.total.cacheReadTokens) + " cache read, " + k(r.total.cacheWriteTokens) + " cache write - " + usd(r.total.costUsd));
     console.log("");
     console.log(pad("hotel", 40) + pad("calls", 8) + pad("guest msgs", 12) + pad("cost", 12) + "per guest msg");
     for (const h of r.byHotel) console.log(pad(h.hotelId ?? "(no hotel - scheduled jobs)", 40) + pad(String(h.calls), 8) + pad(h.guestMessages == null ? "-" : String(h.guestMessages), 12) + pad(usd(h.costUsd), 12) + (h.costPerGuestMessageUsd == null ? "-" : usd(h.costPerGuestMessageUsd)));
     console.log("");
-    console.log(pad("purpose", 12) + pad("model", 30) + pad("calls", 8) + pad("in", 10) + pad("out", 10) + "cost");
-    for (const p of r.byPurpose) console.log(pad(p.purpose, 12) + pad(p.model, 30) + pad(String(p.calls), 8) + pad(k(p.inputTokens), 10) + pad(k(p.outputTokens), 10) + usd(p.costUsd));
+    console.log(pad("purpose", 12) + pad("model", 30) + pad("calls", 8) + pad("in", 10) + pad("out", 10) + pad("cache rd", 10) + pad("cache wr", 10) + "cost");
+    for (const p of r.byPurpose) console.log(pad(p.purpose, 12) + pad(p.model, 30) + pad(String(p.calls), 8) + pad(k(p.inputTokens), 10) + pad(k(p.outputTokens), 10) + pad(k(p.cacheReadTokens), 10) + pad(k(p.cacheWriteTokens), 10) + usd(p.costUsd));
     console.log("");
     console.log(pad("day", 12) + pad("calls", 8) + "cost");
     for (const d of r.byDay) console.log(pad(d.day, 12) + pad(String(d.calls), 8) + usd(d.costUsd));

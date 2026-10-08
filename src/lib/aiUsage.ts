@@ -9,11 +9,11 @@ import { prisma } from "../db";
  * delays or breaks a reply. usageReport() and `pnpm ai:cost` turn the rows into cost per hotel, per purpose and per day.
  */
 
-/** US dollars per million tokens - https://platform.claude.com/docs/en/about-claude/pricing, checked 8 Oct 2026. */
-export const PRICES: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
-  "claude-sonnet-4-6": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
-  "claude-sonnet-4-5": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
-  "claude-haiku-4-5": { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
+/** US dollars per million tokens - https://platform.claude.com/docs/en/about-claude/pricing, checked 8 Oct 2026. cacheWrite is a 5-minute cache write (1.25x input), cacheWrite1h a 1-hour one (2x). */
+export const PRICES: Record<string, { input: number; output: number; cacheWrite: number; cacheWrite1h: number; cacheRead: number }> = {
+  "claude-sonnet-4-6": { input: 3, output: 15, cacheWrite: 3.75, cacheWrite1h: 6, cacheRead: 0.3 },
+  "claude-sonnet-4-5": { input: 3, output: 15, cacheWrite: 3.75, cacheWrite1h: 6, cacheRead: 0.3 },
+  "claude-haiku-4-5": { input: 1, output: 5, cacheWrite: 1.25, cacheWrite1h: 2, cacheRead: 0.1 },
 };
 
 /** The price for a model id, dated ids included (claude-haiku-4-5-20251001 is claude-haiku-4-5); null for a model not in the table. */
@@ -23,14 +23,17 @@ export function priceFor(model: string): (typeof PRICES)[string] | null {
   return key ? PRICES[key] : null;
 }
 
-export type Usage = { input_tokens?: number | null; output_tokens?: number | null; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
+export type Usage = { input_tokens?: number | null; output_tokens?: number | null; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; cache_creation?: { ephemeral_5m_input_tokens?: number | null; ephemeral_1h_input_tokens?: number | null } | null };
 const n = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) && x > 0 ? Math.round(x) : 0);
 
 /** The call's price in US dollars; null when the model has no price in the table (its tokens are still recorded). */
 export function costUsd(model: string, u: Usage): number | null {
   const p = priceFor(model);
   if (!p) return null;
-  return (n(u.input_tokens) * p.input + n(u.output_tokens) * p.output + n(u.cache_creation_input_tokens) * p.cacheWrite + n(u.cache_read_input_tokens) * p.cacheRead) / 1_000_000;
+  // a write to the 1-hour cache costs 2x input, to the 5-minute cache 1.25x; Claude reports the split in cache_creation
+  const write1h = Math.min(n(u.cache_creation?.ephemeral_1h_input_tokens), n(u.cache_creation_input_tokens));
+  const write5m = n(u.cache_creation_input_tokens) - write1h;
+  return (n(u.input_tokens) * p.input + n(u.output_tokens) * p.output + write5m * p.cacheWrite + write1h * p.cacheWrite1h + n(u.cache_read_input_tokens) * p.cacheRead) / 1_000_000;
 }
 
 /* ---- which hotel the current work is for ---- */
